@@ -1,0 +1,30 @@
+/* Design tokens: the colours, fonts and spacing used everywhere. Change a value here to restyle the app. */
+:root {
+  --color-navy: #14263d;
+  --color-navy-hover: #1d3654;
+  --color-navy-line: rgba(255, 255, 255, 0.12);
+  --color-bg: #f3f5f8;
+  --color-surface: #ffffff;
+  --color-text: #26364a;
+  --color-muted: #64748b;
+  --color-border: #dde3ea;
+  --color-focus: #2b5c94;
+
+  --color-success: #1e7b4f;
+  --color-success-bg: #e7f4ec;
+  --color-warning: #8a5a00;
+  --color-warning-bg: #fff4d6;
+  --color-danger: #b42318;
+  --color-danger-bg: #fdecea;
+
+  --font-sans: Inter, 'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif;
+
+  --radius: 4px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --sidebar-width: 232px;
+}

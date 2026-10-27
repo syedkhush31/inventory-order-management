@@ -1,0 +1,165 @@
+/* Login page: navy brand panel (name, description, shelving drawing) beside a white sign-in card
+   on the light grey workspace colour. Collapses to a slim brand bar above the card on small screens. */
+.login {
+  display: grid;
+  grid-template-columns: minmax(360px, 5fr) 6fr;
+  min-height: 100%;
+}
+
+/* ---- Brand panel ---- */
+.login__brand {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-5);
+  padding: 40px 48px 0;
+  overflow: hidden;
+  color: #ffffff;
+  background: var(--color-navy);
+}
+
+.login__brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.login__brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 6px;
+}
+
+.login__brand-name {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.login__brand-body {
+  max-width: 400px;
+}
+
+.login__brand-tagline {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.login__brand-description {
+  margin-top: var(--space-3);
+  font-size: 15px;
+  line-height: 1.6;
+  color: #c9d3e0;
+}
+
+.login__illustration {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  margin-top: auto;
+}
+
+/* ---- Sign-in side ---- */
+.login__main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-5);
+  background: var(--color-bg);
+}
+
+.login__panel {
+  width: 100%;
+  max-width: 420px;
+  padding: 36px 36px 28px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgba(20, 38, 61, 0.06);
+}
+
+.login__title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.login__subtitle {
+  margin-top: var(--space-1);
+  color: var(--color-muted);
+}
+
+.login__form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.login__form .field__input {
+  min-height: 44px;
+  font-size: 15px;
+}
+
+.login__form .field__input:focus {
+  border-color: var(--color-focus);
+}
+
+.login__form .btn {
+  width: 100%;
+  min-height: 44px;
+  margin-top: var(--space-2);
+  font-size: 15px;
+}
+
+.login__footer {
+  margin-top: 28px;
+  padding-top: var(--space-4);
+  font-size: 12px;
+  color: var(--color-muted);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ---- Smaller screens ---- */
+@media (max-width: 960px) {
+  .login__brand {
+    padding: 32px 32px 0;
+  }
+
+  .login__brand-tagline {
+    font-size: 22px;
+  }
+}
+
+@media (max-width: 760px) {
+  .login {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  /* Keep just the brand lockup as a slim bar; the description and drawing return on wider screens. */
+  .login__brand {
+    padding: var(--space-4) var(--space-5);
+  }
+
+  .login__brand-body,
+  .login__illustration {
+    display: none;
+  }
+
+  .login__main {
+    align-items: flex-start;
+    padding: var(--space-5) var(--space-4);
+  }
+
+  .login__panel {
+    padding: var(--space-5) var(--space-4);
+  }
+}
