@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+
+# Build output
+dist/
+build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
