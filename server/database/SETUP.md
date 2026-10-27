@@ -78,7 +78,9 @@ Open both files in your editor and replace `your_database_password` with the pas
 - `server/.env.test` must use `DB_NAME=inventory_test`.
 
 The app refuses to start if a required variable is missing, if a test run points at any database other than
-exactly `inventory_test`, or if a normal run points at a database whose name ends in `_test`.
+exactly `inventory_test`, or if a normal run points at a database whose name ends in `_test`. The API
+(`npm run dev` / `npm start`) also refuses to start when `NODE_ENV` is `test` or anything other than
+`development` / `production`; an unset `NODE_ENV` means `development`.
 
 ## Step 5: Verify the connection
 
@@ -96,8 +98,9 @@ npm run db:check:test
 
 ### Do not set `NODE_ENV` in your terminal
 Setting `NODE_ENV=test` in a PowerShell/cmd/bash session **stays set for every later command in that window**
-(this once caused `admin:create` to pick the test database). Jest sets test mode by itself, and
-`db:check:test` does it per command, so you never need to set it manually.
+(this once caused `admin:create` to pick the test database). `admin:create` and the API now refuse to run
+with it. Jest sets test mode by itself, and `db:check:test` does it per command, so you never need to set it
+manually.
 
 Check and restore development mode:
 - PowerShell: `echo $env:NODE_ENV` shows the value (empty is correct). Clear it with `Remove-Item Env:NODE_ENV`.
@@ -107,10 +110,20 @@ Check and restore development mode:
 
 Anything else you set the same way (like `DB_NAME`) also persists; clear it too.
 
-## Test cleanup
+## Which commands touch a database
 
-Tests will empty tables with `DELETE FROM` through `server/tests/helpers/resetDb.js`. It refuses to run unless
-`NODE_ENV=test` and the server reports the connected database is exactly `inventory_test`.
+Run from `server/`:
+
+| Command | Database effect |
+|---|---|
+| `npm test`, `npm run test:unit` | None. Unit tests use mocks and never connect. `npm test` skips `tests/integration/`. |
+| `npm run test:integration` | **Writes to `inventory_test` only.** Before and after the run it empties every table (`DELETE FROM`, in an order that respects the foreign keys) through `tests/helpers/resetDb.js`, and creates a temporary test admin. |
+| `npm run db:check`, `npm run db:check:test` | Read-only: connects and lists the tables (`inventory_dev` / `inventory_test`). |
+| `npm run admin:create` | **Writes one row to `inventory_dev`** after you type `inventory_dev` to confirm. |
+
+The cleanup helper refuses to run unless `NODE_ENV=test`, the configured `DB_NAME` is exactly `inventory_test`,
+and the server reports that the connected database is exactly `inventory_test`. Because every table in
+`inventory_test` is emptied, never keep data there that you want to keep.
 
 ## Administrator account
 
