@@ -3,6 +3,9 @@
 const env = require('./config/env');
 
 try {
+  // First check: refuse unsafe modes (such as a leftover NODE_ENV=test) before anything else runs.
+  // env.nodeEnv is the resolved mode: an unset NODE_ENV means "development".
+  env.assertServerMode(env.nodeEnv);
   env.assertDbConfig();
   env.assertAuthConfig();
 } catch (err) {

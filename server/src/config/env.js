@@ -70,7 +70,30 @@ function assertDbConfig(env = process.env, mode = nodeEnv) {
   }
 }
 
+const SERVER_MODES = ['development', 'production'];
+
+// Guard for starting the API (server.js). Only "development" and "production" may serve requests.
+// "test" is reserved for the automated tests, because it makes the app use the test database.
+// This only checks the mode name; it never reads or prints environment-file values.
+function assertServerMode(mode) {
+  if (typeof mode !== 'string' || mode.trim() === '') {
+    throw new Error('NODE_ENV is empty or missing. Use "development" or "production" to start the API.');
+  }
+  if (mode === 'test') {
+    throw new Error(
+      'Refusing to start the API with NODE_ENV=test: test mode is reserved for automated tests and uses the ' +
+        'test database. Clear NODE_ENV (PowerShell: Remove-Item Env:NODE_ENV) or open a new terminal.'
+    );
+  }
+  if (!SERVER_MODES.includes(mode)) {
+    throw new Error(
+      `Unsupported NODE_ENV "${mode.slice(0, 30)}". Use "development" or "production" to start the API.`
+    );
+  }
+}
+
 module.exports = config;
+module.exports.assertServerMode = assertServerMode;
 module.exports.assertDbConfig = assertDbConfig;
 module.exports.assertAuthConfig = assertAuthConfig;
 module.exports.TEST_DATABASE_NAME = TEST_DATABASE_NAME;

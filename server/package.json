@@ -10,7 +10,7 @@
     "test": "jest --runInBand --passWithNoTests",
     "db:check": "node scripts/db-check.js",
     "test:unit": "jest --runInBand --passWithNoTests tests/unit",
-    "test:integration": "jest --runInBand --passWithNoTests tests/integration",
+    "test:integration": "jest --runInBand tests/integration --testPathIgnorePatterns=/node_modules/",
     "admin:create": "node scripts/create-admin.js",
     "db:check:test": "node scripts/db-check.js --env=test"
   },
@@ -18,6 +18,10 @@
     "testEnvironment": "node",
     "testMatch": [
       "<rootDir>/tests/**/*.test.js"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "<rootDir>/tests/integration/"
     ]
   },
   "dependencies": {
