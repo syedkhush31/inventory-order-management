@@ -147,3 +147,42 @@ describe('create()', () => {
     expect(await findById(999)).toBeNull();
   });
 });
+
+describe('update() and setActive()', () => {
+  const { update, setActive, EDITABLE_COLUMNS } = require('../../src/repositories/productRepository');
+
+  beforeEach(() => {
+    mockQuery.mockReset();
+    mockQuery.mockResolvedValue([{ affectedRows: 1 }]);
+  });
+
+  test('only the editable columns are listed', () => {
+    expect(EDITABLE_COLUMNS).toEqual({ sku: 'sku', name: 'name', price: 'price' });
+  });
+
+  test('updates only the fields that were sent, using placeholders', async () => {
+    await update(9, { name: "O'Brien; DROP TABLE products", price: '5.00' });
+    const [sql, values] = mockQuery.mock.calls[0];
+    expect(sql).toBe('UPDATE products SET name = ?, price = ? WHERE id = ?');
+    expect(values).toEqual(["O'Brien; DROP TABLE products", '5.00', 9]);
+  });
+
+  test('column names never come from the input', async () => {
+    await update(9, { sku: 'A-1', 'name = 1, is_active': 'x', isActive: false, stockQuantity: 5 });
+    const [sql, values] = mockQuery.mock.calls[0];
+    expect(sql).toBe('UPDATE products SET sku = ? WHERE id = ?');
+    expect(values).toEqual(['A-1', 9]);
+  });
+
+  test('sends nothing when there is nothing to change', async () => {
+    await update(9, {});
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  test('setActive writes 1 or 0 with placeholders', async () => {
+    await setActive(4, false);
+    await setActive(4, true);
+    expect(mockQuery.mock.calls[0]).toEqual(['UPDATE products SET is_active = ? WHERE id = ?', [0, 4]]);
+    expect(mockQuery.mock.calls[1]).toEqual(['UPDATE products SET is_active = ? WHERE id = ?', [1, 4]]);
+  });
+});

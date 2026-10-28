@@ -1,17 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import Sidebar from '../components/Sidebar.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import TopBar from '../components/TopBar.jsx';
 import { useAuth } from '../auth/AuthContext.jsx';
 import { APP_NAME } from '../config/brand.js';
+import useSectionRoute from '../hooks/useSectionRoute.js';
+import CustomersPage from './CustomersPage.jsx';
 import InventoryPage from './InventoryPage.jsx';
 
-// The signed-in layout. The section is kept in memory (no router yet), so a refresh returns to Dashboard.
+// The signed-in layout. The section comes from the URL (/, /inventory, /customers), so a refresh keeps the page.
 // The dashboard deliberately shows no business numbers: none exist yet.
 const MODULES = [
   { name: 'Inventory', built: true },
   { name: 'Orders', built: false },
-  { name: 'Customers', built: false },
+  { name: 'Customers', built: true },
   { name: 'Activity', built: false },
   { name: 'Settings', built: false },
 ];
@@ -70,7 +72,7 @@ function DashboardHome() {
 }
 
 export default function DashboardShell() {
-  const [section, setSection] = useState('dashboard');
+  const [section, setSection] = useSectionRoute();
   const mainRef = useRef(null);
   const firstRender = useRef(true);
 
@@ -89,7 +91,7 @@ export default function DashboardShell() {
       <div className="workspace">
         <TopBar />
         <main className="content" ref={mainRef}>
-          {section === 'inventory' ? <InventoryPage /> : <DashboardHome />}
+          {section === 'inventory' ? <InventoryPage /> : section === 'customers' ? <CustomersPage /> : <DashboardHome />}
         </main>
       </div>
     </div>

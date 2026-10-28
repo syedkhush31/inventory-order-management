@@ -35,3 +35,53 @@ export async function createProduct({ sku, name, price, stockQuantity }) {
   }
   return data.product;
 }
+
+// PATCH /api/products/:id  { sku?, name?, price? }  ->  200 { product }
+// Sends only the fields given (the server rejects anything else). Errors are thrown like createProduct's:
+// 400 { fields }, 404 for an unknown product and 409 { fields: ['sku'] } for a duplicate SKU.
+export async function updateProduct(id, { sku, name, price }) {
+  const changes = {};
+  if (sku !== undefined) changes.sku = sku;
+  if (name !== undefined) changes.name = name;
+  if (price !== undefined) changes.price = price;
+
+  const data = await apiRequest(`/api/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: changes });
+  if (!data || !data.product) {
+    throw new UnexpectedResponseError();
+  }
+  return data.product;
+}
+
+// POST /api/products/:id/deactivate or /reactivate  ->  200 { product }. Repeating either is harmless.
+export async function setProductActive(id, isActive) {
+  const action = isActive ? 'reactivate' : 'deactivate';
+  const data = await apiRequest(`/api/products/${encodeURIComponent(id)}/${action}`, { method: 'POST', body: {} });
+  if (!data || !data.product) {
+    throw new UnexpectedResponseError();
+  }
+  return data.product;
+}
+
+// POST /api/products/:id/stock-adjustments  { delta, reason }  ->  201 { product, adjustment }
+// delta is a signed whole number (-3 removes three). The server refuses to let stock go below 0:
+// 409 { fields: ['delta'], currentStock } carries the real number on hand.
+export async function adjustStock(id, { delta, reason }) {
+  const data = await apiRequest(`/api/products/${encodeURIComponent(id)}/stock-adjustments`, {
+    method: 'POST',
+    body: { delta, reason },
+  });
+  if (!data || !data.product || !data.adjustment) {
+    throw new UnexpectedResponseError();
+  }
+  return data;
+}
+
+// GET /api/products/:id/stock-adjustments?page=&pageSize=
+// Returns { items, page, pageSize, total, totalPages }, newest first. Each item is
+// { id, productId, quantityDelta, reason, adminId, createdAt }. 404 for an unknown product.
+export function listStockAdjustments(id, { page, pageSize }, { signal } = {}) {
+  const query = new URLSearchParams();
+  query.set('page', String(page));
+  query.set('pageSize', String(pageSize));
+  return apiRequest(`/api/products/${encodeURIComponent(id)}/stock-adjustments?${query.toString()}`, { signal });
+}

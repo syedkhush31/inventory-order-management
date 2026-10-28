@@ -9,7 +9,7 @@ if (process.argv.includes('--env=test')) {
 const env = require('../src/config/env');
 const { getPool, closePool } = require('../src/config/db');
 
-const EXPECTED_TABLES = ['admins', 'products', 'customers', 'orders', 'order_items', 'order_status_history'];
+const EXPECTED_TABLES = ['admins', 'products', 'customers', 'orders', 'order_items', 'order_status_history', 'stock_adjustments'];
 
 async function main() {
   env.assertDbConfig();

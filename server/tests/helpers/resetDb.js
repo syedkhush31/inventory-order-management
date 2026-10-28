@@ -5,7 +5,7 @@ const env = require('../../src/config/env');
 const { getPool } = require('../../src/config/db');
 
 // Children first, so foreign keys are never violated.
-const TABLES_IN_DELETE_ORDER = ['order_status_history', 'order_items', 'orders', 'customers', 'products', 'admins'];
+const TABLES_IN_DELETE_ORDER = ['stock_adjustments', 'order_status_history', 'order_items', 'orders', 'customers', 'products', 'admins'];
 
 // The database the server reports for this connection must be exactly the test database.
 function assertLiveDatabaseIsTestDatabase(liveName) {

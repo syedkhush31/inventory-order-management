@@ -80,11 +80,12 @@ describe('resetTestDatabase', () => {
     expect(pool.statements).toEqual([]);
   });
 
-  test('with the exact database it deletes the six tables, children before parents', async () => {
+  test('with the exact database it deletes the seven tables, children before parents', async () => {
     const pool = fakePool('inventory_test');
     await resetTestDatabase(pool);
     expect(pool.statements).toEqual([
       'SELECT DATABASE() AS db',
+      'DELETE FROM `stock_adjustments`',
       'DELETE FROM `order_status_history`',
       'DELETE FROM `order_items`',
       'DELETE FROM `orders`',
@@ -92,6 +93,6 @@ describe('resetTestDatabase', () => {
       'DELETE FROM `products`',
       'DELETE FROM `admins`',
     ]);
-    expect(TABLES_IN_DELETE_ORDER).toHaveLength(6);
+    expect(TABLES_IN_DELETE_ORDER).toHaveLength(7);
   });
 });

@@ -182,3 +182,57 @@
     width: 100%;
   }
 }
+
+/* Row actions and the stock correction preview */
+.row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.btn--small {
+  min-height: 30px;
+  padding: 0 var(--space-3);
+  font-size: 13px;
+}
+
+.stock-preview {
+  margin-top: var(--space-4);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.stock-preview--bad {
+  color: var(--color-danger);
+}
+
+/* Stock history table */
+.history-change {
+  font-weight: 600;
+}
+
+.history-change--up {
+  color: var(--color-success);
+}
+
+.history-change--down {
+  color: var(--color-danger);
+}
+
+/* Customers table */
+.cell--truncate {
+  display: inline-block;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.cell--none {
+  color: var(--color-muted);
+}
+
+.inline-panel .panel {
+  margin-top: var(--space-4);
+}

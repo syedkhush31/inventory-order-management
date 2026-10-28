@@ -55,8 +55,20 @@ mysql -u root -p inventory_test < server/database/schema.sql
 (In Windows PowerShell, `<` redirection is not supported. Use Git Bash, `cmd`, or inside the client run
 `USE inventory_dev; SOURCE server/database/schema.sql;`.)
 
-What this does: creates six empty tables with their keys and constraints. The file has no `DROP` statements.
+What this does: creates seven empty tables with their keys and constraints. The file has no `DROP` statements.
 If a table already exists, it stops with an error instead of overwriting.
+
+### Upgrading a database that was created before stock corrections existed
+
+`schema.sql` now also creates `stock_adjustments`. A database created from an older copy of the file does not have it
+(`npm run db:check` will list it as missing). Add only that table, once per database, with the admin account:
+```
+mysql -u root -p inventory_dev  < server/database/migrations/001_add_stock_adjustments.sql
+mysql -u root -p inventory_test < server/database/migrations/001_add_stock_adjustments.sql
+```
+(Same PowerShell note as above: use Git Bash or `cmd`, or `SOURCE` the file inside the client.)
+The file only creates a new table; it changes no existing table or row and has no `DROP`. Do not run it on a database
+you just created from the current `schema.sql`: that already has the table and the script will stop with an error.
 
 ## Step 3 (optional): Sample data, development only (admin account)
 

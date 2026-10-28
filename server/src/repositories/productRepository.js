@@ -1,4 +1,4 @@
-// All SQL for the products table (read-only for now).
+// All SQL for the products table.
 //
 // Query strategy: pool.query() with ? placeholders. mysql2 fills the placeholders on the client
 // (escaping strings, writing integers as plain digits), so LIMIT/OFFSET work on every MySQL 8 version.
@@ -91,4 +91,50 @@ async function findById(id) {
   return rows[0] || null;
 }
 
-module.exports = { list, create, findById, SORT_COLUMNS, escapeLike };
+// The columns an edit may change. Column names cannot be placeholders, so they come from this fixed list;
+// the values always go through ? placeholders.
+const EDITABLE_COLUMNS = { sku: 'sku', name: 'name', price: 'price' };
+
+// Changes only the fields that were sent. Does nothing if no editable field is present. A duplicate SKU makes
+// MySQL throw ER_DUP_ENTRY (uq_products_sku). A product id that does not exist simply matches no row.
+async function update(id, fields) {
+  const keys = Object.keys(EDITABLE_COLUMNS).filter((key) => fields[key] !== undefined);
+  if (keys.length === 0) {
+    return;
+  }
+  const assignments = keys.map((key) => `${EDITABLE_COLUMNS[key]} = ?`).join(', ');
+  await getPool().query(`UPDATE products SET ${assignments} WHERE id = ?`, [...keys.map((key) => fields[key]), id]);
+}
+
+// Sets the soft-delete flag. Setting the value it already has is harmless (and leaves updated_at alone).
+async function setActive(id, isActive) {
+  await getPool().query('UPDATE products SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
+}
+
+// ---- Used inside a transaction: `connection` comes from withTransaction() in config/db.js ----
+
+// Reads the stock and locks the row until the transaction ends, so two simultaneous corrections to the same
+// product run one after the other. Returns { id, stock_quantity } or null if the product does not exist.
+async function lockForUpdate(connection, id) {
+  const [rows] = await connection.query('SELECT id, stock_quantity FROM products WHERE id = ? LIMIT 1 FOR UPDATE', [id]);
+  return rows[0] || null;
+}
+
+// Writes an absolute quantity (already checked by the caller). The column is UNSIGNED, so MySQL itself would
+// still refuse a negative value.
+async function setStockQuantity(connection, id, stockQuantity) {
+  await connection.query('UPDATE products SET stock_quantity = ? WHERE id = ?', [stockQuantity, id]);
+}
+
+module.exports = {
+  list,
+  create,
+  findById,
+  update,
+  setActive,
+  lockForUpdate,
+  setStockQuantity,
+  SORT_COLUMNS,
+  EDITABLE_COLUMNS,
+  escapeLike,
+};

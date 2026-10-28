@@ -1,7 +1,10 @@
-// The inline "Add product" form. It checks the input, sends POST /api/products, and reports the
-// created product to its parent through onCreated(product). Nothing counts as saved until the server says so.
+// The inline product form. Without a `product` it is the "Add product" form: it sends POST /api/products and
+// reports the created product through onCreated(product). With a `product` it is the "Edit product" form:
+// it is pre-filled, has no stock field (stock has its own "Adjust stock" form), sends PATCH with only the
+// fields that changed, and reports the saved product through onSaved(product).
+// Nothing counts as saved until the server says so.
 import { useEffect, useRef, useState } from 'react';
-import { createProduct, UnexpectedResponseError } from '../api/products.js';
+import { createProduct, updateProduct, UnexpectedResponseError } from '../api/products.js';
 import { ApiError, NetworkError } from '../api/client.js';
 import FormField from './FormField.jsx';
 import Icon from './Icon.jsx';
@@ -13,6 +16,10 @@ const EMPTY = { sku: '', name: '', price: '', stock: '' };
 const SERVER_FIELD_TO_FORM_FIELD = { sku: 'sku', name: 'name', price: 'price', stockQuantity: 'stock' };
 
 function describeFailure(err) {
+  if (err instanceof ApiError && err.status === 404) {
+    return { formError: 'This product no longer exists. Close this form and check the product list.' };
+  }
+
   if (err instanceof NetworkError) {
     return {
       formError:
@@ -52,8 +59,11 @@ function describeFailure(err) {
   return { formError: 'Something went wrong and the product was not saved. Please try again.' };
 }
 
-export default function ProductForm({ onCreated, onCancel }) {
-  const [fields, setFields] = useState(EMPTY);
+export default function ProductForm({ product = null, onCreated, onSaved, onCancel }) {
+  const editing = product !== null;
+  const [fields, setFields] = useState(
+    editing ? { sku: product.sku, name: product.name, price: product.price, stock: '' } : EMPTY
+  );
   const [errors, setErrors] = useState({});
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -85,10 +95,25 @@ export default function ProductForm({ onCreated, onCancel }) {
       return;
     }
 
+    let changes = null;
+    if (editing) {
+      changes = {};
+      for (const key of ['sku', 'name', 'price']) {
+        if (values[key] !== product[key]) changes[key] = values[key];
+      }
+      if (Object.keys(changes).length === 0) {
+        setFormError('Nothing has been changed yet. Edit a field, or cancel.');
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
-      const product = await createProduct(values);
-      onCreated(product); // the parent closes this form
+      if (editing) {
+        onSaved(await updateProduct(product.id, changes)); // the parent closes this form
+      } else {
+        onCreated(await createProduct(values)); // the parent closes this form
+      }
     } catch (err) {
       const failure = describeFailure(err);
       setErrors(failure.fieldErrors || {});
@@ -101,12 +126,15 @@ export default function ProductForm({ onCreated, onCancel }) {
   return (
     <section className="panel product-form" aria-labelledby="add-product-heading">
       <h2 className="panel__header" id="add-product-heading">
-        Add product
+        {editing ? 'Edit product' : 'Add product'}
       </h2>
       <form className="panel__body" onSubmit={handleSubmit} noValidate>
         <p className="product-form__note">
           Fields marked <span aria-hidden="true">*</span>
-          <span className="visually-hidden">with an asterisk</span> are required. New products are created as active.
+          <span className="visually-hidden">with an asterisk</span> are required.{' '}
+          {editing
+            ? 'Stock is changed with Adjust stock, and status with Deactivate or Reactivate.'
+            : 'New products are created as active.'}
         </p>
 
         {formError ? (
@@ -152,17 +180,19 @@ export default function ProductForm({ onCreated, onCancel }) {
             inputMode="decimal"
             autoComplete="off"
           />
-          <FormField
-            id="product-stock"
-            label="Initial stock quantity"
-            hint="Whole number. Leave blank for 0."
-            value={fields.stock}
-            onChange={update('stock')}
-            error={errors.stock}
-            inputRef={refs.stock}
-            inputMode="numeric"
-            autoComplete="off"
-          />
+          {editing ? null : (
+            <FormField
+              id="product-stock"
+              label="Initial stock quantity"
+              hint="Whole number. Leave blank for 0."
+              value={fields.stock}
+              onChange={update('stock')}
+              error={errors.stock}
+              inputRef={refs.stock}
+              inputMode="numeric"
+              autoComplete="off"
+            />
+          )}
         </div>
 
         <div className="form-actions">
@@ -170,7 +200,7 @@ export default function ProductForm({ onCreated, onCancel }) {
             Cancel
           </button>
           <button type="submit" className="btn btn--primary" disabled={submitting}>
-            {submitting ? 'Saving…' : 'Add product'}
+            {submitting ? 'Saving…' : editing ? 'Save changes' : 'Add product'}
           </button>
         </div>
       </form>

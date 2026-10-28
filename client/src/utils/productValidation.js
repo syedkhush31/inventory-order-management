@@ -64,3 +64,60 @@ export function validateProductForm(input) {
   }
   return { values: { sku, name, price, stockQuantity }, errors };
 }
+
+// ---- Stock correction form ----
+export const MAX_STOCK_DELTA = 2147483647;
+export const MAX_REASON_LENGTH = 255;
+export const STOCK_FIELD_ORDER = ['delta', 'reason'];
+
+const SIGNED_WHOLE_NUMBER_PATTERN = /^[+-]?\d+$/;
+
+// The stock after applying a typed change, or null while the text is not a usable whole number.
+// Shown as a live preview; validateStockAdjustment() below is what actually blocks a bad change.
+export function previewStock(deltaText, currentStock) {
+  const text = deltaText.trim();
+  if (!SIGNED_WHOLE_NUMBER_PATTERN.test(text)) return null;
+  const delta = Number(text);
+  if (!Number.isSafeInteger(delta)) return null;
+  return currentStock + delta;
+}
+
+// input: { delta, reason } as typed. currentStock: the number on hand now.
+// Returns { values, errors }; values is { delta, reason } with delta as a whole number, or null on errors.
+// The server checks all of this again, and also against the real stock at the moment of saving.
+export function validateStockAdjustment(input, currentStock) {
+  const deltaText = input.delta.trim();
+  const reason = input.reason.trim();
+  const errors = {};
+  let delta = 0;
+
+  if (deltaText === '') {
+    errors.delta = 'Enter the change in stock, such as 5 or -3.';
+  } else if (!SIGNED_WHOLE_NUMBER_PATTERN.test(deltaText)) {
+    errors.delta = 'Enter a whole number such as 5 or -3.';
+  } else {
+    delta = Number(deltaText);
+    if (!Number.isSafeInteger(delta) || Math.abs(delta) > MAX_STOCK_DELTA) {
+      errors.delta = 'That change is too large.';
+    } else if (delta === 0) {
+      errors.delta = 'The change cannot be 0.';
+    } else if (currentStock + delta < 0) {
+      errors.delta = `Stock cannot go below 0. Only ${currentStock.toLocaleString('en-US')} on hand.`;
+    } else if (currentStock + delta > MAX_STOCK_QUANTITY) {
+      errors.delta = `Stock cannot be more than ${MAX_STOCK_QUANTITY.toLocaleString('en-US')}.`;
+    }
+  }
+
+  if (reason === '') {
+    errors.reason = 'Enter a reason for the correction.';
+  } else if (reason.length > MAX_REASON_LENGTH) {
+    errors.reason = `The reason must be ${MAX_REASON_LENGTH} characters or fewer.`;
+  } else if (CONTROL_CHARACTERS.test(reason)) {
+    errors.reason = 'The reason cannot contain control characters.';
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return { values: null, errors };
+  }
+  return { values: { delta, reason }, errors };
+}

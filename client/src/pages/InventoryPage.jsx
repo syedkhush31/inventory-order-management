@@ -1,12 +1,16 @@
-// Read-only product list: search, status filter, sortable columns and pagination.
-// All data comes from GET /api/products. Nothing is calculated or invented in the browser.
+// Product list: search, status filter, sortable columns and pagination, plus the row actions (edit, adjust stock,
+// deactivate / reactivate) and the inline Add product form. Only one inline panel is open at a time.
+// All data comes from the API. Nothing is calculated or invented in the browser; after any change the list
+// is reloaded from the server.
 import { useEffect, useRef, useState } from 'react';
-import { listProducts } from '../api/products.js';
+import { listProducts, setProductActive } from '../api/products.js';
 import { ApiError, NetworkError } from '../api/client.js';
 import DataTable from '../components/DataTable.jsx';
 import Icon from '../components/Icon.jsx';
 import Pagination from '../components/Pagination.jsx';
 import ProductForm from '../components/ProductForm.jsx';
+import StockAdjustForm from '../components/StockAdjustForm.jsx';
+import StockHistory from '../components/StockHistory.jsx';
 import StatusBadge from '../components/StatusBadge.jsx';
 import { useDebouncedValue } from '../hooks/useDebouncedValue.js';
 import { formatDateTime, formatPrice, formatQuantity } from '../utils/format.js';
@@ -19,29 +23,79 @@ const STATUS_OPTIONS = [
   { value: 'all', label: 'All products' },
 ];
 
-const COLUMNS = [
-  { key: 'sku', header: 'SKU', sortKey: 'sku', render: (p) => p.sku },
-  { key: 'name', header: 'Product name', sortKey: 'name', render: (p) => p.name },
-  { key: 'price', header: 'Price', sortKey: 'price', numeric: true, render: (p) => formatPrice(p.price) },
-  {
-    key: 'stock',
-    header: 'Stock on hand',
-    sortKey: 'stockQuantity',
-    numeric: true,
-    render: (p) => (
-      <span className="stock-cell">
-        {p.stockQuantity === 0 ? <StatusBadge tone="danger">Out of stock</StatusBadge> : null}
-        <span>{formatQuantity(p.stockQuantity)}</span>
-      </span>
-    ),
-  },
-  {
-    key: 'status',
-    header: 'Status',
-    render: (p) => <StatusBadge tone={p.isActive ? 'success' : 'neutral'}>{p.isActive ? 'Active' : 'Inactive'}</StatusBadge>,
-  },
-  { key: 'updated', header: 'Last updated', sortKey: 'updatedAt', render: (p) => formatDateTime(p.updatedAt) },
-];
+function buildColumns({ onEdit, onAdjust, onHistory, onDeactivate, onReactivate, busyId }) {
+  return [
+    { key: 'sku', header: 'SKU', sortKey: 'sku', render: (p) => p.sku },
+    { key: 'name', header: 'Product name', sortKey: 'name', render: (p) => p.name },
+    { key: 'price', header: 'Price', sortKey: 'price', numeric: true, render: (p) => formatPrice(p.price) },
+    {
+      key: 'stock',
+      header: 'Stock on hand',
+      sortKey: 'stockQuantity',
+      numeric: true,
+      render: (p) => (
+        <span className="stock-cell">
+          {p.stockQuantity === 0 ? <StatusBadge tone="danger">Out of stock</StatusBadge> : null}
+          <span>{formatQuantity(p.stockQuantity)}</span>
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (p) => <StatusBadge tone={p.isActive ? 'success' : 'neutral'}>{p.isActive ? 'Active' : 'Inactive'}</StatusBadge>,
+    },
+    { key: 'updated', header: 'Last updated', sortKey: 'updatedAt', render: (p) => formatDateTime(p.updatedAt) },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (p) => (
+        <span className="row-actions">
+          <button type="button" className="btn btn--secondary btn--small" aria-label={`Edit ${p.sku}`} onClick={() => onEdit(p)}>
+            Edit
+          </button>
+          <button
+            type="button"
+            className="btn btn--secondary btn--small"
+            aria-label={`Adjust stock for ${p.sku}`}
+            onClick={() => onAdjust(p)}
+          >
+            Adjust stock
+          </button>
+          <button
+            type="button"
+            className="btn btn--secondary btn--small"
+            aria-label={`View stock history for ${p.sku}`}
+            onClick={() => onHistory(p)}
+          >
+            View stock history
+          </button>
+          {p.isActive ? (
+            <button
+              type="button"
+              className="btn btn--secondary btn--small"
+              aria-label={`Deactivate ${p.sku}`}
+              disabled={busyId === p.id}
+              onClick={() => onDeactivate(p)}
+            >
+              Deactivate
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn--secondary btn--small"
+              aria-label={`Reactivate ${p.sku}`}
+              disabled={busyId === p.id}
+              onClick={() => onReactivate(p)}
+            >
+              {busyId === p.id ? 'Reactivating…' : 'Reactivate'}
+            </button>
+          )}
+        </span>
+      ),
+    },
+  ];
+}
 
 function messageForError(err) {
   if (err instanceof NetworkError) return 'Cannot reach the server. Check your connection and try again.';
@@ -49,6 +103,14 @@ function messageForError(err) {
     return 'The search options were not accepted. Clear the search and try again.';
   }
   return 'Products could not be loaded. Please try again.';
+}
+
+function messageForActionError(err, verb) {
+  if (err instanceof NetworkError) {
+    return `Cannot reach the server, so the product may not have been ${verb}d. Check the list and try again.`;
+  }
+  if (err instanceof ApiError && err.status === 404) return 'That product no longer exists. The list has been refreshed.';
+  return `The product could not be ${verb}d. Please try again.`;
 }
 
 function emptyMessage(search, status) {
@@ -76,9 +138,13 @@ export default function InventoryPage({ debounceMs = 300 }) {
   const [error, setError] = useState('');
   const [reloadCount, setReloadCount] = useState(0);
 
-  // Add product: whether the inline form is open, and the confirmation shown after a successful save.
-  const [showForm, setShowForm] = useState(false);
+  // The one open inline panel: null, or { type: 'add' | 'edit' | 'stock' | 'history' | 'deactivate', product? }.
+  // created: the confirmation after Add product. notice: the confirmation after any other successful change.
+  const [panel, setPanel] = useState(null);
   const [created, setCreated] = useState(null);
+  const [notice, setNotice] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [busyId, setBusyId] = useState(null); // the product whose deactivate / reactivate request is running
   const addButtonRef = useRef(null);
 
   useEffect(() => {
@@ -132,20 +198,72 @@ export default function InventoryPage({ debounceMs = 300 }) {
     );
   }
 
-  function openForm() {
+  function openPanel(next) {
     setCreated(null);
-    setShowForm(true);
+    setNotice('');
+    setActionError('');
+    setPanel(next);
   }
 
   function closeForm() {
-    setShowForm(false);
+    setPanel(null);
     addButtonRef.current?.focus();
   }
+
+  // Called only after the server confirmed a change. The list keeps its page, filters and sort and is reloaded.
+  function finishChange(message) {
+    setNotice(message);
+    setPanel(null);
+    setReloadCount((n) => n + 1);
+    addButtonRef.current?.focus();
+  }
+
+  function handleSaved(product) {
+    finishChange(`Product updated: ${product.sku} — ${product.name}.`);
+  }
+
+  function handleAdjusted({ product, adjustment }) {
+    const amount = formatQuantity(Math.abs(adjustment.quantityDelta));
+    const change = adjustment.quantityDelta > 0 ? `+${amount}` : `-${amount}`;
+    finishChange(
+      `Stock corrected for ${product.sku}: ${change}. Stock on hand is now ${formatQuantity(product.stockQuantity)}.`
+    );
+  }
+
+  async function changeActive(product, makeActive) {
+    if (busyId !== null) return; // one request at a time
+    const verb = makeActive ? 'reactivate' : 'deactivate';
+    setCreated(null);
+    setNotice('');
+    setActionError('');
+    setBusyId(product.id);
+    try {
+      await setProductActive(product.id, makeActive);
+      finishChange(`${product.sku} — ${product.name} was ${verb}d.`);
+    } catch (err) {
+      setActionError(messageForActionError(err, verb));
+      if (err instanceof ApiError && err.status === 404) {
+        setPanel(null);
+        setReloadCount((n) => n + 1);
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const columns = buildColumns({
+    onEdit: (product) => openPanel({ type: 'edit', product }),
+    onAdjust: (product) => openPanel({ type: 'stock', product }),
+    onHistory: (product) => openPanel({ type: 'history', product }),
+    onDeactivate: (product) => openPanel({ type: 'deactivate', product }),
+    onReactivate: (product) => changeActive(product, true),
+    busyId,
+  });
 
   // Called only after the server confirmed the save. Filters and sort stay as they are; we go back to page 1.
   function handleCreated(product) {
     setCreated(product);
-    setShowForm(false);
+    setPanel(null);
     setPage(1);
     setReloadCount((n) => n + 1);
     addButtonRef.current?.focus();
@@ -166,8 +284,8 @@ export default function InventoryPage({ debounceMs = 300 }) {
           type="button"
           className="btn btn--primary"
           ref={addButtonRef}
-          onClick={openForm}
-          aria-expanded={showForm}
+          onClick={() => openPanel({ type: 'add' })}
+          aria-expanded={panel?.type === 'add'}
           aria-controls="add-product-panel"
         >
           <span aria-hidden="true">+</span> Add Product
@@ -191,8 +309,59 @@ export default function InventoryPage({ debounceMs = 300 }) {
         </div>
       ) : null}
 
+      {notice ? (
+        <div className="banner banner--success" role="status">
+          <div className="banner__body">
+            <p>{notice}</p>
+          </div>
+          <button type="button" className="banner__dismiss" onClick={() => setNotice('')}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <div className="banner banner--error" role="alert">
+          <Icon name="alert" size={16} />
+          <span>{actionError}</span>
+        </div>
+      ) : null}
+
       <div id="add-product-panel">
-        {showForm ? <ProductForm onCreated={handleCreated} onCancel={closeForm} /> : null}
+        {panel?.type === 'add' ? <ProductForm onCreated={handleCreated} onCancel={closeForm} /> : null}
+        {panel?.type === 'edit' ? (
+          <ProductForm key={panel.product.id} product={panel.product} onSaved={handleSaved} onCancel={closeForm} />
+        ) : null}
+        {panel?.type === 'stock' ? (
+          <StockAdjustForm key={panel.product.id} product={panel.product} onAdjusted={handleAdjusted} onCancel={closeForm} />
+        ) : null}
+        {panel?.type === 'history' ? <StockHistory key={panel.product.id} product={panel.product} onClose={closeForm} /> : null}
+        {panel?.type === 'deactivate' ? (
+          <section className="panel product-form" aria-labelledby="deactivate-heading">
+            <h2 className="panel__header" id="deactivate-heading">
+              Deactivate {panel.product.sku}?
+            </h2>
+            <div className="panel__body">
+              <p>
+                <strong>{panel.product.name}</strong> will be hidden from the Active list. Nothing is deleted: its stock
+                and history are kept, and you can reactivate it at any time from the Inactive list.
+              </p>
+              <div className="form-actions">
+                <button type="button" className="btn btn--secondary" onClick={closeForm} disabled={busyId !== null}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => changeActive(panel.product, false)}
+                  disabled={busyId !== null}
+                >
+                  {busyId !== null ? 'Deactivating…' : 'Deactivate product'}
+                </button>
+              </div>
+            </div>
+          </section>
+        ) : null}
       </div>
 
       <section className="panel" aria-label="Product list">
@@ -260,7 +429,7 @@ export default function InventoryPage({ debounceMs = 300 }) {
           <>
             <DataTable
               caption="Products"
-              columns={COLUMNS}
+              columns={columns}
               rows={result.items}
               rowKey={(product) => product.id}
               sort={sort}

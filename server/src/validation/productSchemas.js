@@ -26,17 +26,22 @@ const MAX_SKU_LENGTH = 64;
 const MAX_NAME_LENGTH = 255;
 const MAX_STOCK_QUANTITY = 4_294_967_295;
 
+// Field rules shared by "create" and "edit", so the two can never drift apart.
+const skuField = z.string().trim().min(1).max(MAX_SKU_LENGTH).regex(SKU_PATTERN);
+const nameField = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MAX_NAME_LENGTH)
+  .refine((value) => !CONTROL_CHARACTERS.test(value));
+// Price must arrive as text such as "19.99" so money is never turned into a floating-point number.
+const priceField = z.string().regex(PRICE_PATTERN);
+
 // strictObject: any property that is not listed here (id, isActive, createdAt, ...) is rejected.
 const createProductSchema = z.strictObject({
-  sku: z.string().trim().min(1).max(MAX_SKU_LENGTH).regex(SKU_PATTERN),
-  name: z
-    .string()
-    .trim()
-    .min(1)
-    .max(MAX_NAME_LENGTH)
-    .refine((value) => !CONTROL_CHARACTERS.test(value)),
-  // Price must arrive as text such as "19.99" so money is never turned into a floating-point number.
-  price: z.string().regex(PRICE_PATTERN),
+  sku: skuField,
+  name: nameField,
+  price: priceField,
   // Left out (or sent as "") means 0.
   stockQuantity: z.preprocess(
     (value) => (value === '' ? undefined : value),
@@ -44,11 +49,68 @@ const createProductSchema = z.strictObject({
   ),
 });
 
+// ---- Editing a product (PATCH /api/products/:id) ----
+// Only sku, name and price can be edited, and only the fields that are sent are changed.
+// Stock and the active flag have their own routes, so they are rejected here like any unknown property.
+const updateProductSchema = z
+  .strictObject({
+    sku: skuField.optional(),
+    name: nameField.optional(),
+    price: priceField.optional(),
+  })
+  .refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Send at least one field to change',
+    path: ['body'],
+    // Only when nothing else is wrong, so a rejected unknown property is reported by its own name alone.
+    when: (payload) => payload.issues.length === 0,
+  });
+
+// ---- Product id in the URL ----
+// A positive whole number of at most 15 digits, so it is always a safe integer.
+const productIdSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,14}$/)
+  .transform(Number);
+
+// ---- Correcting stock (POST /api/products/:id/stock-adjustments) ----
+// delta is the signed change (+5 adds five, -3 removes three). It must fit the INT column that stores it.
+// reason is kept in the history, so it is required.
+const MAX_STOCK_DELTA = 2_147_483_647;
+const MAX_REASON_LENGTH = 255;
+
+const stockAdjustmentSchema = z.strictObject({
+  delta: z
+    .number()
+    .int()
+    .min(-MAX_STOCK_DELTA)
+    .max(MAX_STOCK_DELTA)
+    .refine((value) => value !== 0),
+  reason: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_REASON_LENGTH)
+    .refine((value) => !CONTROL_CHARACTERS.test(value)),
+});
+
+// ---- Stock history (GET /api/products/:id/stock-adjustments) ----
+// Same paging rules as the product list; a smaller default because each row is a short event.
+const stockHistoryQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(1_000_000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(10),
+});
+
 module.exports = {
   productListQuerySchema,
   createProductSchema,
+  updateProductSchema,
+  productIdSchema,
+  stockAdjustmentSchema,
+  stockHistoryQuerySchema,
   PRODUCT_STATUSES,
   PRODUCT_SORT_KEYS,
   MAX_PAGE_SIZE,
   MAX_STOCK_QUANTITY,
+  MAX_STOCK_DELTA,
+  MAX_REASON_LENGTH,
 };
