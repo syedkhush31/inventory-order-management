@@ -16,6 +16,17 @@ async function insert(connection, { productId, quantityDelta, reason, adminId })
   return rows[0];
 }
 
+// Inserts the stock movement caused by an order: movementType is 'ORDER_CONFIRMED' (a deduction, negative delta) or
+// 'ORDER_CANCELLED' (a restore, positive delta). Needs migration 002. The unique key (order_id, product_id,
+// movement_type) makes MySQL refuse a second deduction or restore for the same order and product.
+async function insertOrderMovement(connection, { productId, quantityDelta, reason, adminId, orderId, movementType }) {
+  await connection.query(
+    `INSERT INTO stock_adjustments (product_id, quantity_delta, reason, admin_id, order_id, movement_type)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [productId, quantityDelta, reason, adminId, orderId, movementType]
+  );
+}
+
 // One page of a product's history, newest first ("id DESC" breaks ties so rows never jump between pages).
 // Returns { rows, total }. pool.query() with ? placeholders, as in productRepository.
 async function listByProduct(productId, { page, pageSize }) {
@@ -39,4 +50,4 @@ async function listByProduct(productId, { page, pageSize }) {
   return { rows, total: Number(countRows[0].total) };
 }
 
-module.exports = { insert, listByProduct };
+module.exports = { insert, insertOrderMovement, listByProduct };

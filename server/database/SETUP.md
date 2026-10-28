@@ -70,6 +70,22 @@ mysql -u root -p inventory_test < server/database/migrations/001_add_stock_adjus
 The file only creates a new table; it changes no existing table or row and has no `DROP`. Do not run it on a database
 you just created from the current `schema.sql`: that already has the table and the script will stop with an error.
 
+### Upgrading a database for order confirmation and cancellation (migration 002)
+
+Confirming an order, and cancelling a CONFIRMED order (which puts its stock back), record their stock movements in
+`stock_adjustments`, which needs two new columns (`order_id` and `movement_type`). A database created from an older `schema.sql` does not have them
+(`npm run db:check` will report them as missing). Run once per database, with the admin account, **after** migration 001 and
+**before** confirming any order:
+```
+mysql -u root -p inventory_dev  < server/database/migrations/002_add_order_stock_movements.sql
+mysql -u root -p inventory_test < server/database/migrations/002_add_order_stock_movements.sql
+```
+(Same PowerShell note as above.) The file only adds columns, a unique key and a foreign key to `stock_adjustments`;
+existing rows are kept and become `MANUAL` movements. It has no `DROP`. Do not run it on a database you just created from the
+current `schema.sql`: that already has the columns and the script will stop with an error. Without it, creating and
+viewing orders and cancelling a PENDING order still work, but confirming an order and cancelling a CONFIRMED order fail
+with an error (nothing is saved).
+
 ## Step 3 (optional): Sample data, development only (admin account)
 
 ```

@@ -10,6 +10,7 @@ const env = require('../src/config/env');
 const { getPool, closePool } = require('../src/config/db');
 
 const EXPECTED_TABLES = ['admins', 'products', 'customers', 'orders', 'order_items', 'order_status_history', 'stock_adjustments'];
+const EXPECTED_STOCK_ADJUSTMENT_COLUMNS = ['order_id', 'movement_type'];
 
 async function main() {
   env.assertDbConfig();
@@ -27,6 +28,22 @@ async function main() {
     process.exitCode = 1;
   } else {
     console.log('All expected tables are present.');
+  }
+
+  // Migration 002 adds these columns to stock_adjustments. Order confirmation needs them.
+  if (existing.has('stock_adjustments')) {
+    const [columns] = await pool.query(
+      `SELECT column_name AS name FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = 'stock_adjustments'`
+    );
+    const have = new Set(columns.map((c) => c.name));
+    const missingColumns = EXPECTED_STOCK_ADJUSTMENT_COLUMNS.filter((c) => !have.has(c));
+    if (missingColumns.length > 0) {
+      console.log(`stock_adjustments is missing columns: ${missingColumns.join(', ')} (apply migration 002)`);
+      process.exitCode = 1;
+    } else {
+      console.log('stock_adjustments has the order columns.');
+    }
   }
 }
 

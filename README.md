@@ -50,19 +50,29 @@ resets them. A production host must serve `index.html` for these paths (the Vite
 
 **Not implemented yet**
 - Deleting products (by design products are only deactivated).
-- Orders (the sidebar entry is a disabled placeholder), reports, and a useful dashboard. Activity and Settings are placeholders too.
+- An Orders page (the sidebar entry is a disabled placeholder; the order API exists, see below), reports, and a useful dashboard. Activity and Settings are placeholders too.
 
 **Database change to apply.** Stock corrections need the `stock_adjustments` table. A database created from the
 current `server/database/schema.sql` already has it. An existing database needs
 `server/database/migrations/001_add_stock_adjustments.sql`, run once by the admin account (see
 [SETUP.md](server/database/SETUP.md)). Until then the stock endpoint answers `500`; everything else keeps working.
+
+**Second database change (orders).** Confirming an order, and cancelling a `CONFIRMED` order, record their stock
+movements in `stock_adjustments`, which needs the columns `order_id` and `movement_type`. A database created from the current
+`schema.sql` already has them. An existing database needs `server/database/migrations/002_add_order_stock_movements.sql`
+(after 001), run once by the admin account (see [SETUP.md](server/database/SETUP.md)); `npm run db:check` in `server/`
+reports the columns as missing until then. Without it, creating and viewing orders, cancelling a `PENDING` order, and
+the status moves that do not touch stock still work, but **confirming an order and cancelling a `CONFIRMED` order answer
+`500`** (nothing is saved).
 `npm run db:check` lists the table as missing.
 
 **Verification status.** The server and client have unit tests that use mocks and need no database. One
 server integration suite covers authentication against a real MySQL test database. The product list, create,
-edit, deactivate / reactivate, stock-adjustment and customer endpoints have no database-backed tests yet; the SQL (including
-the row lock used for stock corrections) has not been run against MySQL by the automated tests. The same is true of
-the stock-history and customer endpoints. This README does not record test results; run the commands below.
+edit, deactivate / reactivate, stock-adjustment, customer and order endpoints have no database-backed tests yet; the SQL (including
+the row lock used for stock corrections, the shared locks and bulk insert used for orders, and the order-row and product
+locks used by confirm / cancel, and migration 002 itself) has not been run against MySQL by the automated tests; the
+"same moment" order tests simulate the lock with a fake transaction and do not prove real locking behaviour. The same is true of the stock-history, customer and order endpoints: none has been
+verified through real-MySQL integration tests. This README does not record test results; run the commands below.
 
 ## API
 
@@ -190,6 +200,73 @@ rejected with `400`. Works on inactive customers. Responses: `200 { "customer": 
 
 `POST /api/customers/:id/deactivate` and `POST /api/customers/:id/reactivate` set `is_active` to 0 or 1 (no body needed).
 Nothing is deleted, and repeating a call is harmless. Response: `200 { "customer": { ... } }` (or `400` / `404` as above).
+
+**Orders (backend).** Create, read and move orders through their statuses. There is no Orders page yet. The routes
+need the session cookie (`401`), writes need the frontend origin (`403`), and responses are never cached. Orders are
+never deleted or edited after creation: there is no update or delete route, and the status routes below are the only way
+an order changes.
+
+`POST /api/orders` creates a `PENDING` order. Body: `{ "customerId": 3, "items": [{ "productId": 1, "quantity": 2 }] }`.
+- 1 to 50 lines; each product at most once; quantity a whole number from 1 to 10000.
+- The customer and every product must exist and be active. Unknown ones give `400`, inactive ones `409`
+  (with `fields` and, for products, `productIds`).
+- Prices, totals and status cannot be sent: any other property is rejected with `400`. The server copies each
+  product's current price into the order line (`order_items.unit_price`), so later price edits never change past orders.
+- The total is added up in whole cents (never floating point), must fit `DECIMAL(12,2)`, and is returned as a string such as `"64.97"`.
+- The order, its lines and its first status record (`null -> PENDING`) are saved together or not at all. Stock is not changed or checked.
+- Response `201 { "order": { ... } }` (same shape as the details below).
+- Rare case: if the order was saved but reading it back fails, the answer is still `201`, with
+  `{ "order": null, "orderId": 12, "status": "PENDING", "totalAmount": "64.97", "detailsAvailable": false, "message": "..." }`.
+  The order exists, so do not submit it again; open it from the list. The creation is never retried automatically.
+
+`GET /api/orders` query parameters (all optional; anything invalid returns `400`): `q` (up to 100 characters; matches the
+customer's name or email, and also the order number, e.g. `12` or `#12`), `status` (`all`, `PENDING`, `CONFIRMED`,
+`SHIPPED`, `DELIVERED`, `CANCELLED`; default `all`), `page` (default 1), `pageSize` (1-100, default 25), `sort` (`id`,
+`createdAt`, `updatedAt`, `totalAmount`, `status`, `customerName`; default `createdAt`), `order` (`asc`/`desc`, default `desc`).
+Response `200`: `{ items, page, pageSize, total, totalPages }`; each item is
+`{ id, status, totalAmount, itemCount, customer: { id, name, email }, createdAt, updatedAt }`. Date filtering is not included yet.
+
+`POST /api/orders/:id/confirm`, `/cancel`, `/ship` and `/deliver` move an order to its next status (no body needed).
+Each one runs in a single database transaction that locks the order row, checks the move is allowed from the status the
+order has at that moment, changes stock if needed, saves the new status and writes an `order_status_history` row
+(`fromStatus -> toStatus`, with the administrator). If any step fails, nothing is saved.
+
+| Current status | Allowed next | Stock effect |
+|---|---|---|
+| `PENDING` | `confirm` -> `CONFIRMED` | deducts every line's quantity |
+| `PENDING` | `cancel` -> `CANCELLED` | none |
+| `CONFIRMED` | `ship` -> `SHIPPED` | none |
+| `CONFIRMED` | `cancel` -> `CANCELLED` | puts every line's quantity back |
+| `SHIPPED` | `deliver` -> `DELIVERED` | none |
+| `SHIPPED`, `DELIVERED`, `CANCELLED` | nothing (a shipped or delivered order cannot be cancelled) | none |
+
+- **Confirm** locks the order, then the products in ascending id order, and checks that every product has enough stock.
+  If any product is short, the whole confirmation is refused with `409 { "error": "Not enough stock to confirm this order",
+  "shortages": [{ "productId", "requested", "available" }] }` and nothing changes; the order stays `PENDING`. Stock never goes
+  below 0. Products deactivated since the order was placed can still be confirmed. Each deduction is also recorded in
+  `stock_adjustments` (negative change, `movement_type` `ORDER_CONFIRMED`, `order_id`, reason `Order #12 confirmed`), so it
+  appears in the product's stock history.
+- **Cancelling a `CONFIRMED` order** adds the quantities back (movement `ORDER_CANCELLED`, positive change, reason
+  `Order #12 cancelled`). It happens once: the status leaves `CONFIRMED` in the same transaction, so a repeat is refused,
+  and the unique key on `stock_adjustments (order_id, product_id, movement_type)` is a second guard. If a restore would pass
+  the largest stock quantity (4294967295) it is refused with `409` and `productIds`.
+- **Not allowed or repeated** (confirming twice, cancelling a cancelled or shipped order, shipping a `PENDING` order, ...)
+  returns `409 { "error": "This order is already CONFIRMED", "currentStatus": "CONFIRMED" }` (the message says "already" when
+  the order has that status, otherwise "is X and cannot be changed to Y") and changes nothing.
+- Unknown id `404`; invalid id `400`. Success is `200 { "order": { ... } }` in the details shape below.
+- Busy order: if another request holds a lock on the order or one of its products for too long (MySQL
+  `ER_LOCK_WAIT_TIMEOUT`), or MySQL ends the request to break a deadlock (`ER_LOCK_DEADLOCK`), the answer is
+  `503 { "error": "The order is busy; please try again." }` with a `Retry-After: 2` header. The transaction was rolled
+  back, so nothing was saved and trying again is safe. Only these two database errors are treated this way, and only on
+  these four status routes; any other database error is the generic `500`.
+- Rare case, as for creation: if the change was saved but the order cannot be read back, the answer is still `200` with
+  `{ "order": null, "orderId", "status", "detailsAvailable": false, "message" }`. Do not repeat the action; a repeat would be
+  refused anyway.
+
+`GET /api/orders/:id` returns `200 { "order": { id, status, totalAmount, customer: { id, name, email, isActive },
+items: [{ id, productId, sku, productName, quantity, unitPrice, lineTotal }], statusHistory: [{ id, fromStatus, toStatus,
+changedByAdminId, changedAt }], createdAt, updatedAt } }`. `unitPrice` is the price saved when the order was placed.
+Unknown id: `404 { "error": "Order not found" }`; invalid id: `400`.
 
 ## Testing
 

@@ -94,21 +94,30 @@ CREATE TABLE order_status_history (
     ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- Manual stock corrections. Added after the first release: an older database gets it from
--- migrations/001_add_stock_adjustments.sql instead of re-running this whole file.
+-- Every stock movement made through the app: manual corrections and order confirmations / cancellations.
+-- Added after the first release: an older database gets the table from migrations/001_add_stock_adjustments.sql and
+-- the order columns from migrations/002_add_order_stock_movements.sql instead of re-running this whole file.
 CREATE TABLE stock_adjustments (
   id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   product_id     BIGINT UNSIGNED NOT NULL,
   quantity_delta INT             NOT NULL COMMENT 'signed change applied to stock_quantity, never 0',
   reason         VARCHAR(255)    NOT NULL,
   admin_id       BIGINT UNSIGNED NOT NULL COMMENT 'the administrator who made the correction',
+  order_id       BIGINT UNSIGNED NULL COMMENT 'the order that caused this movement; NULL for manual corrections',
+  movement_type  ENUM('MANUAL','ORDER_CONFIRMED','ORDER_CANCELLED') NOT NULL DEFAULT 'MANUAL'
+    COMMENT 'why stock moved: a manual correction, an order confirmation (deduction) or a cancellation (restore)',
   created_at     TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_stock_adjustments_product_created (product_id, created_at),
   KEY idx_stock_adjustments_admin (admin_id),
+  -- Safety net for "exactly once": one deduction and at most one restore per product per order.
+  -- MySQL allows many NULL order_id values in a unique key, so manual corrections are not affected.
+  UNIQUE KEY uq_stock_adjustments_order_product_type (order_id, product_id, movement_type),
   CONSTRAINT fk_stock_adjustments_product FOREIGN KEY (product_id) REFERENCES products (id)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT fk_stock_adjustments_admin FOREIGN KEY (admin_id) REFERENCES admins (id)
+    ON DELETE RESTRICT ON UPDATE RESTRICT,
+  CONSTRAINT fk_stock_adjustments_order FOREIGN KEY (order_id) REFERENCES orders (id)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT chk_stock_adjustments_delta_nonzero CHECK (quantity_delta <> 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
