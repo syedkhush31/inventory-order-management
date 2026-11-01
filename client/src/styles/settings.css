@@ -1,0 +1,41 @@
+/* Settings page: the read-only summaries at the top of a section, and the form spacing. */
+.settings-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-4);
+  margin: 0 0 var(--space-4);
+}
+
+.settings-summary dt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.settings-summary dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+/* An empty grid cell, so "Confirm new password" starts on the second row beside "New password". */
+.settings-form-spacer {
+  display: block;
+}
+
+.panel__body > .banner {
+  margin-bottom: var(--space-4);
+}
+
+@media (max-width: 640px) {
+  .settings-form-spacer {
+    display: none;
+  }
+
+  .settings-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+  }
+}

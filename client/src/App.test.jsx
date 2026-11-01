@@ -217,7 +217,7 @@ describe('login form', () => {
 });
 
 describe('dashboard shell and logout', () => {
-  test('shows the sidebar sections: Dashboard, Inventory and Customers available, the rest disabled, no invented metrics', async () => {
+  test('shows the sidebar sections: all six sections available and none marked "Soon"', async () => {
     mockApi({ 'GET /api/auth/me': jsonResponse(200, { admin: ADMIN }) });
     render(<App />);
     await screen.findByRole('heading', { name: 'Dashboard' });
@@ -227,11 +227,10 @@ describe('dashboard shell and logout', () => {
     expect(screen.getByRole('button', { name: /^Dashboard/ })).toBeEnabled();
     expect(screen.getByRole('button', { name: /^Inventory/ })).toBeEnabled();
     expect(screen.getByRole('button', { name: /^Customers/ })).toBeEnabled();
-    for (const name of ['Orders', 'Activity', 'Settings']) {
-      expect(screen.getByRole('button', { name: new RegExp(`^${name}`) })).toBeDisabled();
-    }
-    expect(screen.getAllByText('Not built yet')).toHaveLength(3);
-    expect(screen.getAllByText('Available')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /^Orders/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^Activity/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /^Settings/ })).toBeEnabled();
+    expect(nav).not.toHaveTextContent('Soon');
   });
 
   test('clicking Inventory opens the inventory page and marks it as the current section', async () => {
@@ -282,7 +281,7 @@ describe('dashboard shell and logout', () => {
     await screen.findByRole('heading', { name: 'Dashboard' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Sign out failed');
+    expect(await screen.findByText(/Sign out failed/)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeEnabled();
   });

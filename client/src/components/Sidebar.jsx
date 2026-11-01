@@ -1,15 +1,15 @@
 import Icon from './Icon.jsx';
 import { APP_NAME, APP_TAGLINE } from '../config/brand.js';
 
-// Dashboard, Inventory and Customers exist so far. The other sections are shown greyed out and cannot be clicked,
+// Dashboard, Inventory, Orders, Customers and Activity exist so far. The other sections are shown greyed out and cannot be clicked,
 // so nothing pretends to work before it is built.
 const ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: 'dashboard', available: true },
   { key: 'inventory', label: 'Inventory', icon: 'inventory', available: true },
-  { key: 'orders', label: 'Orders', icon: 'orders', available: false },
+  { key: 'orders', label: 'Orders', icon: 'orders', available: true },
   { key: 'customers', label: 'Customers', icon: 'customers', available: true },
-  { key: 'activity', label: 'Activity', icon: 'activity', available: false },
-  { key: 'settings', label: 'Settings', icon: 'settings', available: false },
+  { key: 'activity', label: 'Activity', icon: 'activity', available: true },
+  { key: 'settings', label: 'Settings', icon: 'settings', available: true },
 ];
 
 // current: the key of the section being shown. onNavigate(key) switches section.

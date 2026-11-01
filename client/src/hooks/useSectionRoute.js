@@ -5,7 +5,10 @@ import { useCallback, useEffect, useState } from 'react';
 export const SECTION_PATHS = {
   dashboard: '/',
   inventory: '/inventory',
+  orders: '/orders',
   customers: '/customers',
+  activity: '/activity',
+  settings: '/settings',
 };
 
 // Returns the section key for a path, or null if the path is not a known page.
@@ -35,10 +38,12 @@ export default function useSectionRoute() {
     }
   }, [section]);
 
-  const navigate = useCallback((key) => {
+  // search: an optional query string such as "?order=7", used to open a page with something selected.
+  const navigate = useCallback((key, search = '') => {
     const target = SECTION_PATHS[key];
     if (target === undefined) return;
-    if (window.location.pathname !== target) window.history.pushState(null, '', target);
+    const destination = `${target}${search}`;
+    if (window.location.pathname + window.location.search !== destination) window.history.pushState(null, '', destination);
     setPathname(target);
   }, []);
 
