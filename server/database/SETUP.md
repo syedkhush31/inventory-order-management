@@ -55,7 +55,7 @@ mysql -u root -p inventory_test < server/database/schema.sql
 (In Windows PowerShell, `<` redirection is not supported. Use Git Bash, `cmd`, or inside the client run
 `USE inventory_dev; SOURCE server/database/schema.sql;`.)
 
-What this does: creates seven empty tables with their keys and constraints. The file has no `DROP` statements.
+What this does: creates nine empty tables with their keys and constraints. The file has no `DROP` statements.
 If a table already exists, it stops with an error instead of overwriting.
 
 ### Upgrading a database that was created before stock corrections existed
@@ -85,6 +85,76 @@ existing rows are kept and become `MANUAL` movements. It has no `DROP`. Do not r
 current `schema.sql`: that already has the columns and the script will stop with an error. Without it, creating and
 viewing orders and cancelling a PENDING order still work, but confirming an order and cancelling a CONFIRMED order fail
 with an error (nothing is saved).
+
+### Upgrading a database for the activity log and settings (migration 003)
+
+The Activity page, the Settings page and password changes need two new tables (`audit_log`, `app_settings`) and
+two new columns on `admins` (`display_name`, `token_version`). A database created from an older `schema.sql` does not
+have them. Run the migration once, with the admin account, **after** migrations 001 and 002 and **before** running the
+application code that uses them, on `inventory_dev` only for now. The file has three statements (two `CREATE TABLE`, one
+`ALTER TABLE`). It inserts nothing, changes no row and has no `DROP`. Existing administrators keep working (their
+`token_version` starts at 0). Do not run it on a database you just created from the current `schema.sql`.
+
+**Never run the whole file a second time after it has partly succeeded.** MySQL cannot undo an earlier statement, and a
+re-run stops at the first statement ("already exists") without reaching the missing ones. Use "Recovery" below instead.
+Never use the `mysql` client's `--force` option with this file.
+
+**Do not apply migration 003 to `inventory_test` yet.** `tests/helpers/resetDb.js` empties tables in a fixed order and does not
+know about `audit_log`; once that table exists, its link to `admins` would stop the integration test cleanup from removing the
+test administrator. The helper will be updated together with the tests for these features, and this note will be changed then.
+
+All commands below are for PowerShell, run from the project root unless stated. Nothing here is run for you.
+
+**1. Check the starting point** (from `server/`; read-only):
+```
+npm run db:check
+```
+Expected before the migration: the 002 lines all `ok` and `Migration 002 is fully applied.`, every 003 line `MISSING`, and
+`Migration 003 is NOT applied.` If you see `PARTIAL MIGRATION`, stop and go to Recovery.
+
+**2. Back up** (one line; the file name gets the current date and time, and the command refuses to overwrite an existing file):
+```
+$f = "C:\dev\shelfsync-backups\inventory_dev_pre-migration-003_$(Get-Date -Format yyyyMMdd-HHmmss).sql"; if (Test-Path -LiteralPath $f) { throw "Backup already exists: $f" } else { & "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe" -u root -p --single-transaction --routines --triggers --no-tablespaces --set-gtid-purged=OFF --result-file="$f" inventory_dev }
+```
+It asks for the admin password at a hidden prompt. In the same window, check it: `(Get-Item -LiteralPath $f).Length` must be above 0
+and `Get-Content -LiteralPath $f -Tail 1` must start with `-- Dump completed`.
+
+**3. Apply** with `mysql.exe` and `SOURCE` (use forward slashes in the `SOURCE` path). Interactive form, recommended
+because it shows the result of every statement:
+```
+& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p
+```
+then, inside the client:
+```
+USE inventory_dev;
+SELECT DATABASE();
+SOURCE C:/dev/inventory-order-management/server/database/migrations/003_add_audit_log_and_settings.sql
+```
+`SELECT DATABASE();` must show `inventory_dev`. Each statement should answer `Query OK`. Any `ERROR` line: stop, copy it, and go
+to Recovery. Do not run the file again. One-line form (prints nothing when it succeeds):
+```
+& "C:\Program Files\MySQL\MySQL Server 8.0\bin\mysql.exe" -u root -p inventory_dev -e "source C:/dev/inventory-order-management/server/database/migrations/003_add_audit_log_and_settings.sql"
+```
+
+**4. Verify** (from `server/`; read-only): `npm run db:check` must end with `Migration 003 is fully applied.`
+
+#### Recovery after an error or a partial migration 003
+
+First run `npm run db:check` (read-only) and read the lines for Migration 003. Never guess from the error alone.
+
+| `db:check` shows | What it means | What to do |
+|---|---|---|
+| Every 003 line `MISSING`, `NOT applied` | The first statement failed, so nothing changed | Fix the cause named in the error, then run the whole file once (step 3) |
+| `audit_log` all `ok`; `app_settings` and `admins` lines `MISSING` | Statement 1 worked, statement 2 failed | Run **only statement 2**, then **only statement 3** (see below), checking `db:check` after each |
+| `audit_log` and `app_settings` all `ok`; the two `admins` columns `MISSING` | Statements 1 and 2 worked, statement 3 failed | Run **only statement 3** |
+| A table that exists but has some `MISSING` lines (a column, index or foreign key) | Something outside this file changed it | Stop. Do not fix by hand. Send me the full `db:check` output. The new tables are empty, so recreating one is possible, but only after review |
+| Any other mix (for example `admins` columns `ok` but `audit_log` `MISSING`) | Something was run out of order or by hand | Stop and send me the full `db:check` output |
+| `Migration 003 is fully applied` after an error such as `ERROR 1050 ... already exists` | The file was run twice; the second run stopped at statement 1 and changed nothing | Nothing to do |
+
+To run **one statement**: open `server/database/migrations/003_add_audit_log_and_settings.sql` in an editor and copy from its
+`-- STATEMENT n of 3` label down to the `;` that ends it. Open the client as in step 3, run `USE inventory_dev;` and
+`SELECT DATABASE();`, paste the statement, and run `npm run db:check` again. If the state is still unclear, the
+backup from step 2 is the fallback: ask before restoring anything.
 
 ## Step 3 (optional): Sample data, development only (admin account)
 
@@ -116,7 +186,8 @@ From `server/`:
 ```
 npm run db:check
 ```
-Expected on success: `Connected to database: inventory_dev` and `All expected tables are present.`
+Expected on success: `Connected to database: inventory_dev`, `All original tables are present.`, and `Migration 002 is fully applied.`
+and `Migration 003 is fully applied.` (once migration 003 has been applied; before that it says `NOT applied`).
 On failure it prints only a short error code, never credentials.
 
 To check the test database, use the dedicated script. It switches to test mode for that one command only:
@@ -146,7 +217,7 @@ Run from `server/`:
 |---|---|
 | `npm test`, `npm run test:unit` | None. Unit tests use mocks and never connect. `npm test` skips `tests/integration/`. |
 | `npm run test:integration` | **Writes to `inventory_test` only.** Before and after the run it empties every table (`DELETE FROM`, in an order that respects the foreign keys) through `tests/helpers/resetDb.js`, and creates a temporary test admin. |
-| `npm run db:check`, `npm run db:check:test` | Read-only: connects and lists the tables (`inventory_dev` / `inventory_test`). |
+| `npm run db:check`, `npm run db:check:test` | Read-only: connects and checks the tables, columns, indexes and foreign keys (`inventory_dev` / `inventory_test`). |
 | `npm run admin:create` | **Writes one row to `inventory_dev`** after you type `inventory_dev` to confirm. |
 
 The cleanup helper refuses to run unless `NODE_ENV=test`, the configured `DB_NAME` is exactly `inventory_test`,

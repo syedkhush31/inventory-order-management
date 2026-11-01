@@ -1,4 +1,4 @@
-// Builds the Express app. Product, customer and order routes are mounted behind the authenticate middleware.
+// Builds the Express app. Product, customer, order, activity, account and settings routes are mounted behind the authenticate middleware.
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -9,6 +9,9 @@ const createAuthRouter = require('./routes/authRoutes');
 const createProductRouter = require('./routes/productRoutes');
 const createCustomerRouter = require('./routes/customerRoutes');
 const createOrderRouter = require('./routes/orderRoutes');
+const createActivityRouter = require('./routes/activityRoutes');
+const createAccountRouter = require('./routes/accountRoutes');
+const createSettingsRouter = require('./routes/settingsRoutes');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 const app = express();
@@ -23,6 +26,9 @@ app.use('/api/auth', createAuthRouter());
 app.use('/api/products', createProductRouter());
 app.use('/api/customers', createCustomerRouter());
 app.use('/api/orders', createOrderRouter());
+app.use('/api/activity', createActivityRouter());
+app.use('/api/account', createAccountRouter());
+app.use('/api/settings', createSettingsRouter());
 
 app.use(notFound);
 app.use(errorHandler);

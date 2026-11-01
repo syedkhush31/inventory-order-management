@@ -1,4 +1,5 @@
-// Checks that the app can reach MySQL and that the expected tables exist.
+// Checks that the app can reach MySQL and that the expected tables, columns, indexes and foreign keys exist.
+// READ-ONLY: it only runs SELECT statements on information_schema.
 // Prints only a short status. It never prints credentials or the connection settings.
 // "--env=test" switches to the test configuration for this one process only, so nothing
 // needs to be set in the terminal (a leftover NODE_ENV would affect later commands).
@@ -8,9 +9,62 @@ if (process.argv.includes('--env=test')) {
 
 const env = require('../src/config/env');
 const { getPool, closePool } = require('../src/config/db');
+const { evaluateSchema } = require('./dbCheckModel');
 
-const EXPECTED_TABLES = ['admins', 'products', 'customers', 'orders', 'order_items', 'order_status_history', 'stock_adjustments'];
-const EXPECTED_STOCK_ADJUSTMENT_COLUMNS = ['order_id', 'movement_type'];
+// Reads the structure of the connected database, but only for the tables this check cares about.
+async function readSchema(pool) {
+  const [tables] = await pool.query(
+    'SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE()'
+  );
+  const [columns] = await pool.query(
+    'SELECT table_name AS tbl, column_name AS name FROM information_schema.columns WHERE table_schema = DATABASE()'
+  );
+  const [indexes] = await pool.query(
+    'SELECT DISTINCT table_name AS tbl, index_name AS name FROM information_schema.statistics WHERE table_schema = DATABASE()'
+  );
+  const [keys] = await pool.query(
+    `SELECT table_name AS tbl, constraint_name AS name, referenced_table_name AS ref
+       FROM information_schema.key_column_usage
+      WHERE table_schema = DATABASE() AND referenced_table_name IS NOT NULL`
+  );
+  return {
+    tables: new Set(tables.map((t) => t.name)),
+    columns: new Set(columns.map((c) => `${c.tbl}.${c.name}`)),
+    indexes: new Set(indexes.map((i) => `${i.tbl}.${i.name}`)),
+    foreignKeys: new Map(keys.map((k) => [`${k.tbl}.${k.name}`, k.ref])),
+  };
+}
+
+function report(result) {
+  let healthy = true;
+
+  if (result.missingBaseTables.length > 0) {
+    console.log(`Missing tables: ${result.missingBaseTables.join(', ')} (has schema.sql been applied?)`);
+    healthy = false;
+  } else {
+    console.log('All original tables are present.');
+  }
+
+  for (const migration of result.migrations) {
+    console.log(`\nMigration ${migration.id}:`);
+    for (const piece of migration.pieces) {
+      for (const item of piece.items) {
+        console.log(`  ${item.ok ? 'ok     ' : 'MISSING'}  ${item.label}`);
+      }
+    }
+    if (migration.state === 'applied') {
+      console.log(`  -> Migration ${migration.id} is fully applied.`);
+    } else if (migration.state === 'not-applied') {
+      console.log(`  -> Migration ${migration.id} is NOT applied. Apply it once (see server/database/SETUP.md).`);
+      healthy = false;
+    } else {
+      console.log(`  -> PARTIAL MIGRATION ${migration.id} — DO NOT RERUN THE FULL FILE.`);
+      console.log('     Follow "Recovery" in server/database/SETUP.md: run only the statement(s) that are missing.');
+      healthy = false;
+    }
+  }
+  return healthy;
+}
 
 async function main() {
   env.assertDbConfig();
@@ -18,32 +72,9 @@ async function main() {
   const [[row]] = await pool.query('SELECT DATABASE() AS db');
   console.log(`Connected to database: ${row.db}`);
 
-  const [tables] = await pool.query(
-    'SELECT table_name AS name FROM information_schema.tables WHERE table_schema = DATABASE()'
-  );
-  const existing = new Set(tables.map((t) => t.name));
-  const missing = EXPECTED_TABLES.filter((t) => !existing.has(t));
-  if (missing.length > 0) {
-    console.log(`Missing tables: ${missing.join(', ')} (has schema.sql been applied?)`);
+  const result = evaluateSchema(await readSchema(pool));
+  if (!report(result)) {
     process.exitCode = 1;
-  } else {
-    console.log('All expected tables are present.');
-  }
-
-  // Migration 002 adds these columns to stock_adjustments. Order confirmation needs them.
-  if (existing.has('stock_adjustments')) {
-    const [columns] = await pool.query(
-      `SELECT column_name AS name FROM information_schema.columns
-        WHERE table_schema = DATABASE() AND table_name = 'stock_adjustments'`
-    );
-    const have = new Set(columns.map((c) => c.name));
-    const missingColumns = EXPECTED_STOCK_ADJUSTMENT_COLUMNS.filter((c) => !have.has(c));
-    if (missingColumns.length > 0) {
-      console.log(`stock_adjustments is missing columns: ${missingColumns.join(', ')} (apply migration 002)`);
-      process.exitCode = 1;
-    } else {
-      console.log('stock_adjustments has the order columns.');
-    }
   }
 }
 

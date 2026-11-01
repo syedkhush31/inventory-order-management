@@ -75,17 +75,28 @@ async function list({ q, status, sort, order, page, pageSize }) {
 // Inserts one product and returns its new id. is_active, created_at and updated_at use the
 // table defaults, so a new product is always active. A duplicate SKU makes MySQL throw
 // ER_DUP_ENTRY (the unique key uq_products_sku is the final authority, even for concurrent requests).
-async function create({ sku, name, price, stockQuantity }) {
-  const [result] = await getPool().query(
+// executor: the connection of a transaction (see withTransaction), or the pool by default.
+async function create({ sku, name, price, stockQuantity }, executor = getPool()) {
+  const [result] = await executor.query(
     'INSERT INTO products (sku, name, price, stock_quantity) VALUES (?, ?, ?, ?)',
     [sku, name, price, stockQuantity]
   );
   return result.insertId;
 }
 
-async function findById(id) {
-  const [rows] = await getPool().query(
+async function findById(id, executor = getPool()) {
+  const [rows] = await executor.query(
     'SELECT id, sku, name, price, stock_quantity, is_active, created_at, updated_at FROM products WHERE id = ? LIMIT 1',
+    [id]
+  );
+  return rows[0] || null;
+}
+
+// Reads the whole product and locks the row until the transaction ends, so the values compared by an edit (for the
+// audit log) can not change underneath it. `connection` comes from withTransaction().
+async function findByIdForUpdate(connection, id) {
+  const [rows] = await connection.query(
+    'SELECT id, sku, name, price, stock_quantity, is_active, created_at, updated_at FROM products WHERE id = ? LIMIT 1 FOR UPDATE',
     [id]
   );
   return rows[0] || null;
@@ -97,18 +108,18 @@ const EDITABLE_COLUMNS = { sku: 'sku', name: 'name', price: 'price' };
 
 // Changes only the fields that were sent. Does nothing if no editable field is present. A duplicate SKU makes
 // MySQL throw ER_DUP_ENTRY (uq_products_sku). A product id that does not exist simply matches no row.
-async function update(id, fields) {
+async function update(id, fields, executor = getPool()) {
   const keys = Object.keys(EDITABLE_COLUMNS).filter((key) => fields[key] !== undefined);
   if (keys.length === 0) {
     return;
   }
   const assignments = keys.map((key) => `${EDITABLE_COLUMNS[key]} = ?`).join(', ');
-  await getPool().query(`UPDATE products SET ${assignments} WHERE id = ?`, [...keys.map((key) => fields[key]), id]);
+  await executor.query(`UPDATE products SET ${assignments} WHERE id = ?`, [...keys.map((key) => fields[key]), id]);
 }
 
 // Sets the soft-delete flag. Setting the value it already has is harmless (and leaves updated_at alone).
-async function setActive(id, isActive) {
-  await getPool().query('UPDATE products SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
+async function setActive(id, isActive, executor = getPool()) {
+  await executor.query('UPDATE products SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
 }
 
 // ---- Used inside a transaction: `connection` comes from withTransaction() in config/db.js ----
@@ -130,6 +141,7 @@ module.exports = {
   list,
   create,
   findById,
+  findByIdForUpdate,
   update,
   setActive,
   lockForUpdate,

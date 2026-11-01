@@ -74,8 +74,9 @@ async function list({ q, status, sort, order, page, pageSize }) {
 
 // Inserts one customer and returns its new id. New customers are active (the table default). A duplicate email
 // makes MySQL throw ER_DUP_ENTRY (the unique key uq_customers_email is the final authority, even for concurrent requests).
-async function create({ name, email, phone, address }) {
-  const [result] = await getPool().query('INSERT INTO customers (name, email, phone, address) VALUES (?, ?, ?, ?)', [
+// executor: the connection of a transaction (see withTransaction), or the pool by default.
+async function create({ name, email, phone, address }, executor = getPool()) {
+  const [result] = await executor.query('INSERT INTO customers (name, email, phone, address) VALUES (?, ?, ?, ?)', [
     name,
     email,
     phone,
@@ -84,8 +85,15 @@ async function create({ name, email, phone, address }) {
   return result.insertId;
 }
 
-async function findById(id) {
-  const [rows] = await getPool().query(`SELECT ${COLUMNS} FROM customers WHERE id = ? LIMIT 1`, [id]);
+async function findById(id, executor = getPool()) {
+  const [rows] = await executor.query(`SELECT ${COLUMNS} FROM customers WHERE id = ? LIMIT 1`, [id]);
+  return rows[0] || null;
+}
+
+// Reads the whole customer and locks the row until the transaction ends, so the values compared by an edit (for the
+// audit log) can not change underneath it. `connection` comes from withTransaction().
+async function findByIdForUpdate(connection, id) {
+  const [rows] = await connection.query(`SELECT ${COLUMNS} FROM customers WHERE id = ? LIMIT 1 FOR UPDATE`, [id]);
   return rows[0] || null;
 }
 
@@ -95,18 +103,18 @@ const EDITABLE_COLUMNS = { name: 'name', email: 'email', phone: 'phone', address
 
 // Changes only the fields that were sent (null is a real value: it clears phone or address). Does nothing if no
 // editable field is present. A duplicate email makes MySQL throw ER_DUP_ENTRY. An id that does not exist matches no row.
-async function update(id, fields) {
+async function update(id, fields, executor = getPool()) {
   const keys = Object.keys(EDITABLE_COLUMNS).filter((key) => fields[key] !== undefined);
   if (keys.length === 0) {
     return;
   }
   const assignments = keys.map((key) => `${EDITABLE_COLUMNS[key]} = ?`).join(', ');
-  await getPool().query(`UPDATE customers SET ${assignments} WHERE id = ?`, [...keys.map((key) => fields[key]), id]);
+  await executor.query(`UPDATE customers SET ${assignments} WHERE id = ?`, [...keys.map((key) => fields[key]), id]);
 }
 
 // Sets the soft-delete flag. Setting the value it already has is harmless (and leaves updated_at alone).
-async function setActive(id, isActive) {
-  await getPool().query('UPDATE customers SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
+async function setActive(id, isActive, executor = getPool()) {
+  await executor.query('UPDATE customers SET is_active = ? WHERE id = ?', [isActive ? 1 : 0, id]);
 }
 
-module.exports = { list, create, findById, update, setActive, SORT_COLUMNS, EDITABLE_COLUMNS, escapeLike };
+module.exports = { list, create, findById, findByIdForUpdate, update, setActive, SORT_COLUMNS, EDITABLE_COLUMNS, escapeLike };

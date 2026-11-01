@@ -6,6 +6,8 @@ const crypto = require('crypto');
 process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
 process.env.CLIENT_ORIGIN = 'http://localhost:5173';
 
+jest.mock('../../src/config/db', () => ({ withTransaction: jest.fn(), getPool: jest.fn() }));
+jest.mock('../../src/repositories/auditRepository', () => ({ insert: jest.fn() }));
 jest.mock('../../src/repositories/adminRepository', () => ({
   findByEmail: jest.fn(),
   findById: jest.fn(),
@@ -16,18 +18,24 @@ jest.mock('../../src/repositories/productRepository', () => ({
   list: jest.fn(),
   create: jest.fn(),
   findById: jest.fn(),
+  findByIdForUpdate: jest.fn(),
   update: jest.fn(),
   setActive: jest.fn(),
 }));
 
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
+const db = require('../../src/config/db');
+const auditRepository = require('../../src/repositories/auditRepository');
 const adminRepository = require('../../src/repositories/adminRepository');
 const productRepository = require('../../src/repositories/productRepository');
 const app = require('../../src/app');
 
 const cookie = () =>
   `admin_token=${jwt.sign({}, process.env.JWT_SECRET, { algorithm: 'HS256', subject: '7', expiresIn: 60 })}`;
+
+// The connection of the (fake) transaction: the product write and the audit INSERT must both receive it.
+const CONNECTION = { query: jest.fn() };
 
 const ROW = {
   id: 42,
@@ -57,9 +65,12 @@ const duplicate = (key) =>
 beforeEach(() => {
   jest.resetAllMocks();
   adminRepository.findById.mockResolvedValue({ id: 7, email: 'admin@example.com', is_active: 1 });
+  db.withTransaction.mockImplementation(async (fn) => fn(CONNECTION));
+  auditRepository.insert.mockResolvedValue(1);
   productRepository.update.mockResolvedValue(undefined);
   productRepository.setActive.mockResolvedValue(undefined);
   productRepository.findById.mockResolvedValue(ROW);
+  productRepository.findByIdForUpdate.mockResolvedValue(ROW); // the row as it is before the edit
 });
 
 describe('PATCH /api/products/:id', () => {
@@ -69,8 +80,20 @@ describe('PATCH /api/products/:id', () => {
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.body.product).toMatchObject({ id: 42, sku: 'SKU-2001', name: 'USB-C Hub', price: '29.00', isActive: true });
-    expect(productRepository.update).toHaveBeenCalledWith(42, { name: 'USB-C Hub', price: '29.00' });
+    expect(productRepository.update).toHaveBeenCalledWith(42, { name: 'USB-C Hub', price: '29.00' }, CONNECTION);
+    expect(productRepository.findByIdForUpdate).toHaveBeenCalledWith(CONNECTION, 42);
     expect(productRepository.findById).toHaveBeenCalledWith(42);
+    // Written on the same connection, by administrator 7, with old and new values for name and price.
+    expect(auditRepository.insert).toHaveBeenCalledTimes(1);
+    expect(auditRepository.insert).toHaveBeenCalledWith(CONNECTION, {
+      adminId: 7,
+      eventType: 'PRODUCT_UPDATED',
+      entityType: 'PRODUCT',
+      entityId: 42,
+      // The name changed, so the field is named, but its old and new text is NOT stored. The price carries its values.
+      details: { changedFields: ['name', 'price'], changes: { price: { from: '24.50', to: '29.00' } } },
+    });
+    expect(JSON.stringify(auditRepository.insert.mock.calls[0][1])).not.toMatch(/USB Hub|USB-C Hub/);
   });
 
   test('works on an inactive product', async () => {
@@ -101,11 +124,27 @@ describe('PATCH /api/products/:id', () => {
     expect(productRepository.update).not.toHaveBeenCalled();
   });
 
-  test('404 when the product does not exist', async () => {
+  test('404 when the product does not exist, and nothing is written or audited', async () => {
+    productRepository.findByIdForUpdate.mockResolvedValue(null);
     productRepository.findById.mockResolvedValue(null);
     const res = await patch(999, { name: 'x' });
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'Product not found' });
+    expect(productRepository.update).not.toHaveBeenCalled();
+    expect(auditRepository.insert).not.toHaveBeenCalled();
+  });
+
+  test('an edit that changes nothing (same values, price written differently) is saved but not audited', async () => {
+    const res = await patch(42, { name: 'USB Hub', price: '24.5' });
+    expect(res.status).toBe(200);
+    expect(auditRepository.insert).not.toHaveBeenCalled();
+  });
+
+  test('a failed audit write fails the request (the transaction is rolled back by withTransaction)', async () => {
+    auditRepository.insert.mockRejectedValue(new Error('audit down'));
+    const res = await patch(42, { name: 'Changed' });
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'Internal server error' });
   });
 
   test('409 for a duplicate SKU', async () => {
@@ -113,6 +152,7 @@ describe('PATCH /api/products/:id', () => {
     const res = await patch(42, { sku: 'TAKEN' });
     expect(res.status).toBe(409);
     expect(res.body).toEqual({ error: 'A product with this SKU already exists', fields: ['sku'] });
+    expect(auditRepository.insert).not.toHaveBeenCalled();
   });
 
   test('a duplicate on some other key is a generic 500', async () => {
@@ -137,19 +177,34 @@ describe.each([
   ['deactivate', 0],
   ['reactivate', 1],
 ])('POST /api/products/:id/%s', (name, flag) => {
-  test('sets the flag and returns the product', async () => {
+  // The product as it is before the request: in the opposite state, so the request really changes it.
+  const before = { ...ROW, is_active: flag === 1 ? 0 : 1 };
+
+  test('sets the flag, returns the product and audits the change on the same connection', async () => {
+    productRepository.findByIdForUpdate.mockResolvedValue(before);
     productRepository.findById.mockResolvedValue({ ...ROW, is_active: flag });
     const res = await action(42, name);
     expect(res.status).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.body.product.isActive).toBe(flag === 1);
-    expect(productRepository.setActive).toHaveBeenCalledWith(42, flag === 1);
+    expect(productRepository.setActive).toHaveBeenCalledWith(42, flag === 1, CONNECTION);
+    expect(auditRepository.insert).toHaveBeenCalledTimes(1);
+    expect(auditRepository.insert).toHaveBeenCalledWith(CONNECTION, {
+      adminId: 7,
+      eventType: flag === 1 ? 'PRODUCT_ACTIVATED' : 'PRODUCT_DEACTIVATED',
+      entityType: 'PRODUCT',
+      entityId: 42,
+      details: null,
+    });
   });
 
-  test('is idempotent: repeating it succeeds each time', async () => {
+  test('is idempotent: repeating it succeeds each time, changes nothing and writes no audit record', async () => {
+    productRepository.findByIdForUpdate.mockResolvedValue({ ...ROW, is_active: flag }); // already in that state
     productRepository.findById.mockResolvedValue({ ...ROW, is_active: flag });
     expect((await action(42, name)).status).toBe(200);
     expect((await action(42, name)).status).toBe(200);
+    expect(productRepository.setActive).not.toHaveBeenCalled();
+    expect(auditRepository.insert).not.toHaveBeenCalled();
   });
 
   test('400 for an invalid id and 404 for an unknown product', async () => {
@@ -158,12 +213,16 @@ describe.each([
     expect(bad.body).toEqual({ error: 'Invalid request', fields: ['id'] });
     expect(productRepository.setActive).not.toHaveBeenCalled();
 
+    productRepository.findByIdForUpdate.mockResolvedValue(null);
     productRepository.findById.mockResolvedValue(null);
     const missing = await action(999, name);
     expect(missing.status).toBe(404);
+    expect(productRepository.setActive).not.toHaveBeenCalled();
+    expect(auditRepository.insert).not.toHaveBeenCalled();
   });
 
   test('a database failure is a generic 500', async () => {
+    productRepository.findByIdForUpdate.mockResolvedValue(before);
     productRepository.setActive.mockRejectedValue(new Error('boom'));
     const res = await action(42, name);
     expect(res.status).toBe(500);

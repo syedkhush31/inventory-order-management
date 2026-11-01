@@ -8,8 +8,10 @@ SET NAMES utf8mb4;
 CREATE TABLE admins (
   id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   email         VARCHAR(255)    NOT NULL,
+  display_name  VARCHAR(100)    NULL COMMENT 'optional name shown in the app',
   password_hash VARCHAR(255)    NOT NULL COMMENT 'bcrypt hash only, never a plaintext password',
   is_active     TINYINT(1)      NOT NULL DEFAULT 1,
+  token_version INT UNSIGNED    NOT NULL DEFAULT 0 COMMENT 'raised on every password change to invalidate older login tokens',
   created_at    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -120,4 +122,45 @@ CREATE TABLE stock_adjustments (
   CONSTRAINT fk_stock_adjustments_order FOREIGN KEY (order_id) REFERENCES orders (id)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT chk_stock_adjustments_delta_nonzero CHECK (quantity_delta <> 0)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Added after the first release: an older database gets audit_log, app_settings and the two admins columns
+-- (display_name, token_version) from migrations/003_add_audit_log_and_settings.sql instead of re-running this whole file.
+-- Keep these definitions identical to that migration.
+
+-- Append-only record of changes that no other table already records (products, customers, account, settings).
+-- Orders and manual stock corrections are NOT copied here: order_status_history and stock_adjustments already
+-- record them with who and when. The application only ever INSERTs into this table, in the same transaction
+-- as the change it describes. details holds short non-sensitive JSON (for example which fields changed); it must
+-- never contain passwords, hashes, tokens or contact details.
+CREATE TABLE audit_log (
+  id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  occurred_at TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  admin_id    BIGINT UNSIGNED NOT NULL COMMENT 'the administrator who made the change',
+  event_type  ENUM(
+                'PRODUCT_CREATED','PRODUCT_UPDATED','PRODUCT_ACTIVATED','PRODUCT_DEACTIVATED',
+                'CUSTOMER_CREATED','CUSTOMER_UPDATED','CUSTOMER_ACTIVATED','CUSTOMER_DEACTIVATED',
+                'ACCOUNT_PROFILE_UPDATED','ACCOUNT_PASSWORD_CHANGED','SETTINGS_UPDATED'
+              ) NOT NULL,
+  entity_type ENUM('PRODUCT','CUSTOMER','ACCOUNT','SETTINGS') NOT NULL,
+  entity_id   BIGINT UNSIGNED NULL COMMENT 'id of the product, customer or administrator, or NULL for settings',
+  details     JSON            NULL COMMENT 'short non-sensitive facts only, such as changed field names',
+  PRIMARY KEY (id),
+  KEY idx_audit_log_occurred (occurred_at, id),
+  KEY idx_audit_log_admin (admin_id),
+  KEY idx_audit_log_entity (entity_type, entity_id),
+  CONSTRAINT fk_audit_log_admin FOREIGN KEY (admin_id) REFERENCES admins (id)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Application preferences, one row per setting. No rows are inserted here: a setting with no row uses its
+-- built-in default in the application (low_stock_threshold defaults to 5). Values are checked by the application.
+CREATE TABLE app_settings (
+  setting_key         VARCHAR(64)     NOT NULL,
+  setting_value       VARCHAR(255)    NOT NULL,
+  updated_by_admin_id BIGINT UNSIGNED NULL,
+  updated_at          TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (setting_key),
+  CONSTRAINT fk_app_settings_admin FOREIGN KEY (updated_by_admin_id) REFERENCES admins (id)
+    ON DELETE RESTRICT ON UPDATE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

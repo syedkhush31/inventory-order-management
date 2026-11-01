@@ -6,6 +6,8 @@ const crypto = require('crypto');
 process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
 process.env.CLIENT_ORIGIN = 'http://localhost:5173';
 
+jest.mock('../../src/config/db', () => ({ withTransaction: jest.fn(), getPool: jest.fn() }));
+jest.mock('../../src/repositories/auditRepository', () => ({ insert: jest.fn() }));
 jest.mock('../../src/repositories/adminRepository', () => ({
   findByEmail: jest.fn(),
   findById: jest.fn(),
@@ -20,12 +22,17 @@ jest.mock('../../src/repositories/productRepository', () => ({
 
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
+const db = require('../../src/config/db');
+const auditRepository = require('../../src/repositories/auditRepository');
 const adminRepository = require('../../src/repositories/adminRepository');
 const productRepository = require('../../src/repositories/productRepository');
 const app = require('../../src/app');
 
 const cookie = () =>
   `admin_token=${jwt.sign({}, process.env.JWT_SECRET, { algorithm: 'HS256', subject: '7', expiresIn: 60 })}`;
+
+// The connection of the (fake) transaction: the product INSERT and the audit INSERT must both receive it.
+const CONNECTION = { query: jest.fn() };
 
 const BODY = { sku: 'SKU-2001', name: 'USB Hub', price: '24.50', stockQuantity: 15 };
 
@@ -49,6 +56,8 @@ const post = (body, { withCookie = true } = {}) => {
 beforeEach(() => {
   jest.resetAllMocks();
   adminRepository.findById.mockResolvedValue({ id: 7, email: 'admin@example.com', is_active: 1 });
+  db.withTransaction.mockImplementation(async (fn) => fn(CONNECTION));
+  auditRepository.insert.mockResolvedValue(1);
   productRepository.create.mockResolvedValue(42);
   productRepository.findById.mockResolvedValue(DB_ROW);
 });
@@ -70,18 +79,31 @@ describe('successful creation', () => {
         updatedAt: '2026-10-28T09:00:00.000Z',
       },
     });
-    expect(productRepository.create).toHaveBeenCalledWith(BODY);
+    expect(productRepository.create).toHaveBeenCalledWith(BODY, CONNECTION);
     expect(productRepository.findById).toHaveBeenCalledWith(42);
+    // The audit record is written on the same transaction connection, by the signed-in administrator (id 7).
+    expect(auditRepository.insert).toHaveBeenCalledTimes(1);
+    expect(auditRepository.insert).toHaveBeenCalledWith(CONNECTION, {
+      adminId: 7,
+      eventType: 'PRODUCT_CREATED',
+      entityType: 'PRODUCT',
+      entityId: 42,
+      details: { price: '24.50' }, // never the SKU or name: they are free text
+    });
+    expect(JSON.stringify(auditRepository.insert.mock.calls[0][1])).not.toMatch(/SKU-2001|USB Hub/);
   });
 
   test('trims the SKU and name, and keeps the price as the exact text', async () => {
     await post({ sku: '  Ab-1.x/Y_2 ', name: '  Spaced Name  ', price: '0.10' });
-    expect(productRepository.create).toHaveBeenCalledWith({
-      sku: 'Ab-1.x/Y_2',
-      name: 'Spaced Name',
-      price: '0.10',
-      stockQuantity: 0,
-    });
+    expect(productRepository.create).toHaveBeenCalledWith(
+      {
+        sku: 'Ab-1.x/Y_2',
+        name: 'Spaced Name',
+        price: '0.10',
+        stockQuantity: 0,
+      },
+      CONNECTION
+    );
   });
 
   test('omitted and empty-string stock both default to 0', async () => {
@@ -183,6 +205,7 @@ describe('duplicate SKU (409)', () => {
     expect(res.body).toEqual({ error: 'A product with this SKU already exists', fields: ['sku'] });
     expect(JSON.stringify(res.body)).not.toMatch(/SQL|Duplicate entry|uq_products/);
     expect(productRepository.findById).not.toHaveBeenCalled();
+    expect(auditRepository.insert).not.toHaveBeenCalled();
   });
 
   test('works without any pre-check: two concurrent requests, the database decides', async () => {

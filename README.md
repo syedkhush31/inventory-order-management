@@ -276,7 +276,7 @@ Run these from `server/` or `client/`. **Know which commands write to a database
 |---|---|---|
 | `server`: `npm test` or `npm run test:unit` | Unit tests with mocks | None. No connection is made. |
 | `server`: `npm run test:integration` | Authentication tests against real MySQL | **WRITES.** Deletes **all rows** from the seven tables in `inventory_test` before and after the run, and creates a temporary test admin. Refuses to run unless the connected database is exactly `inventory_test`. Never touches `inventory_dev`. |
-| `server`: `npm run db:check` / `npm run db:check:test` | Connects and lists tables | Read-only (dev / test database). |
+| `server`: `npm run db:check` / `npm run db:check:test` | Connects and checks tables, columns, indexes and foreign keys | Read-only (dev / test database). |
 | `server`: `npm run admin:create` | Creates the administrator | **WRITES** one row to `inventory_dev` after a typed confirmation. |
 | `client`: `npm test` | Component and API tests with a fake `fetch` | None, and no server is needed. |
 | `client`: `npm run build` | Production build into `client/dist` | None. |

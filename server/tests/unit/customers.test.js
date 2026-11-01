@@ -8,6 +8,7 @@ process.env.CLIENT_ORIGIN = 'http://localhost:5173';
 
 const mockPoolQuery = jest.fn();
 jest.mock('../../src/config/db', () => ({ withTransaction: jest.fn(), getPool: () => ({ query: mockPoolQuery }) }));
+jest.mock('../../src/repositories/auditRepository', () => ({ insert: jest.fn() }));
 jest.mock('../../src/repositories/adminRepository', () => ({
   findByEmail: jest.fn(),
   findById: jest.fn(),
@@ -18,18 +19,24 @@ jest.mock('../../src/repositories/customerRepository', () => ({
   list: jest.fn(),
   create: jest.fn(),
   findById: jest.fn(),
+  findByIdForUpdate: jest.fn(),
   update: jest.fn(),
   setActive: jest.fn(),
 }));
 
 const request = require('supertest');
 const jwt = require('jsonwebtoken');
+const db = require('../../src/config/db');
+const auditRepository = require('../../src/repositories/auditRepository');
 const adminRepository = require('../../src/repositories/adminRepository');
 const customerRepository = require('../../src/repositories/customerRepository');
 const app = require('../../src/app');
 
 const cookie = () =>
   `admin_token=${jwt.sign({}, process.env.JWT_SECRET, { algorithm: 'HS256', subject: '7', expiresIn: 60 })}`;
+
+// The connection of the (fake) transaction: the customer write and the audit INSERT must both receive it.
+const CONNECTION = { query: jest.fn() };
 
 const ROW = {
   id: 42,
@@ -55,6 +62,9 @@ beforeEach(() => {
   jest.resetAllMocks();
   mockPoolQuery.mockReset();
   adminRepository.findById.mockResolvedValue({ id: 7, email: 'admin@example.com', is_active: 1 });
+  db.withTransaction.mockImplementation(async (fn) => fn(CONNECTION));
+  auditRepository.insert.mockResolvedValue(1);
+  customerRepository.findByIdForUpdate.mockResolvedValue(ROW); // the row as it is before an edit
   customerRepository.list.mockResolvedValue({ rows: [ROW], total: 1 });
   customerRepository.create.mockResolvedValue(42);
   customerRepository.update.mockResolvedValue(undefined);
@@ -153,18 +163,30 @@ describe('POST /api/customers', () => {
     expect(res.status).toBe(201);
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.body.customer).toMatchObject({ id: 42, name: 'Ann Lee', email: 'ann@example.com', isActive: true });
-    expect(customerRepository.create).toHaveBeenCalledWith({
-      name: 'Ann Lee',
-      email: 'ann@example.com',
-      phone: '555 0100',
-      address: '1 Main St',
-    });
+    expect(customerRepository.create).toHaveBeenCalledWith(
+      {
+        name: 'Ann Lee',
+        email: 'ann@example.com',
+        phone: '555 0100',
+        address: '1 Main St',
+      },
+      CONNECTION
+    );
     expect(customerRepository.findById).toHaveBeenCalledWith(42);
+    // Audited on the same connection by administrator 7, with no customer details at all.
+    expect(auditRepository.insert).toHaveBeenCalledTimes(1);
+    expect(auditRepository.insert).toHaveBeenCalledWith(CONNECTION, {
+      adminId: 7,
+      eventType: 'CUSTOMER_CREATED',
+      entityType: 'CUSTOMER',
+      entityId: 42,
+      details: null,
+    });
   });
 
   test('phone and address may be left out', async () => {
     await send('post', '/api/customers', { name: 'Ann', email: 'ann@example.com' });
-    expect(customerRepository.create).toHaveBeenCalledWith({ name: 'Ann', email: 'ann@example.com', phone: null, address: null });
+    expect(customerRepository.create).toHaveBeenCalledWith({ name: 'Ann', email: 'ann@example.com', phone: null, address: null }, CONNECTION);
   });
 
   test.each([
@@ -209,7 +231,31 @@ describe('PATCH /api/customers/:id', () => {
     const res = await send('patch', '/api/customers/42', { name: ' Ann Smith ', phone: '' });
     expect(res.status).toBe(200);
     expect(res.body.customer).toMatchObject({ id: 42, name: 'Ann Smith', phone: null });
-    expect(customerRepository.update).toHaveBeenCalledWith(42, { name: 'Ann Smith', phone: null });
+    expect(customerRepository.update).toHaveBeenCalledWith(42, { name: 'Ann Smith', phone: null }, CONNECTION);
+    expect(customerRepository.findByIdForUpdate).toHaveBeenCalledWith(CONNECTION, 42);
+    // Field NAMES only: not the old or new name, and not the cleared phone number.
+    expect(auditRepository.insert).toHaveBeenCalledTimes(1);
+    expect(auditRepository.insert).toHaveBeenCalledWith(CONNECTION, {
+      adminId: 7,
+      eventType: 'CUSTOMER_UPDATED',
+      entityType: 'CUSTOMER',
+      entityId: 42,
+      details: { changedFields: ['name', 'phone'] },
+    });
+    expect(JSON.stringify(auditRepository.insert.mock.calls[0][1])).not.toMatch(/Ann|555|@|Main St/);
+  });
+
+  test('an edit that changes nothing is saved but not audited', async () => {
+    const res = await send('patch', '/api/customers/42', { name: 'Ann Lee', phone: '555 0100' });
+    expect(res.status).toBe(200);
+    expect(auditRepository.insert).not.toHaveBeenCalled();
+  });
+
+  test('a failed audit write fails the request (the transaction is rolled back by withTransaction)', async () => {
+    auditRepository.insert.mockRejectedValue(new Error('audit down'));
+    const res = await send('patch', '/api/customers/42', { name: 'Changed' });
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'Internal server error' });
   });
 
   test('works on an inactive customer', async () => {
@@ -239,11 +285,14 @@ describe('PATCH /api/customers/:id', () => {
     nothingWritten();
   });
 
-  test('404 when the customer does not exist', async () => {
+  test('404 when the customer does not exist, and nothing is written or audited', async () => {
+    customerRepository.findByIdForUpdate.mockResolvedValue(null);
     customerRepository.findById.mockResolvedValue(null);
     const res = await send('patch', '/api/customers/999', { name: 'x' });
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'Customer not found' });
+    nothingWritten();
+    expect(auditRepository.insert).not.toHaveBeenCalled();
   });
 
   test('409 for a duplicate email', async () => {
@@ -251,6 +300,7 @@ describe('PATCH /api/customers/:id', () => {
     const res = await send('patch', '/api/customers/42', { email: 'taken@example.com' });
     expect(res.status).toBe(409);
     expect(res.body).toEqual({ error: 'A customer with this email already exists', fields: ['email'] });
+    expect(auditRepository.insert).not.toHaveBeenCalled();
   });
 
   test('an unexpected database failure is a generic 500', async () => {
@@ -265,18 +315,33 @@ describe.each([
   ['deactivate', 0],
   ['reactivate', 1],
 ])('POST /api/customers/:id/%s', (name, flag) => {
-  test('sets the flag and returns the customer; nothing is deleted', async () => {
+  // The customer as it is before the request: in the opposite state, so the request really changes it.
+  const before = { ...ROW, is_active: flag === 1 ? 0 : 1 };
+
+  test('sets the flag, returns the customer and audits the change; nothing is deleted', async () => {
+    customerRepository.findByIdForUpdate.mockResolvedValue(before);
     customerRepository.findById.mockResolvedValue({ ...ROW, is_active: flag });
     const res = await send('post', `/api/customers/42/${name}`, {});
     expect(res.status).toBe(200);
     expect(res.body.customer.isActive).toBe(flag === 1);
-    expect(customerRepository.setActive).toHaveBeenCalledWith(42, flag === 1);
+    expect(customerRepository.setActive).toHaveBeenCalledWith(42, flag === 1, CONNECTION);
+    expect(auditRepository.insert).toHaveBeenCalledTimes(1);
+    expect(auditRepository.insert).toHaveBeenCalledWith(CONNECTION, {
+      adminId: 7,
+      eventType: flag === 1 ? 'CUSTOMER_ACTIVATED' : 'CUSTOMER_DEACTIVATED',
+      entityType: 'CUSTOMER',
+      entityId: 42,
+      details: null,
+    });
   });
 
-  test('is idempotent: repeating it succeeds each time', async () => {
+  test('is idempotent: repeating it succeeds each time, changes nothing and writes no audit record', async () => {
+    customerRepository.findByIdForUpdate.mockResolvedValue({ ...ROW, is_active: flag }); // already in that state
     customerRepository.findById.mockResolvedValue({ ...ROW, is_active: flag });
     expect((await send('post', `/api/customers/42/${name}`, {})).status).toBe(200);
     expect((await send('post', `/api/customers/42/${name}`, {})).status).toBe(200);
+    expect(customerRepository.setActive).not.toHaveBeenCalled();
+    expect(auditRepository.insert).not.toHaveBeenCalled();
   });
 
   test('400 for an invalid id and 404 for an unknown customer', async () => {
@@ -285,11 +350,15 @@ describe.each([
     expect(bad.body).toEqual({ error: 'Invalid request', fields: ['id'] });
     expect(customerRepository.setActive).not.toHaveBeenCalled();
 
+    customerRepository.findByIdForUpdate.mockResolvedValue(null);
     customerRepository.findById.mockResolvedValue(null);
     expect((await send('post', `/api/customers/999/${name}`, {})).status).toBe(404);
+    expect(customerRepository.setActive).not.toHaveBeenCalled();
+    expect(auditRepository.insert).not.toHaveBeenCalled();
   });
 
   test('a database failure is a generic 500', async () => {
+    customerRepository.findByIdForUpdate.mockResolvedValue(before);
     customerRepository.setActive.mockRejectedValue(new Error('boom'));
     const res = await send('post', `/api/customers/42/${name}`, {});
     expect(res.status).toBe(500);

@@ -1,11 +1,11 @@
-// Protects a route: requires a valid auth cookie belonging to an active admin.
+// Protects a route: requires a valid auth cookie belonging to an active admin, whose session version still matches.
 const env = require('../config/env');
 const authService = require('../services/authService');
 
 async function authenticate(req, res, next) {
   const token = req.cookies && req.cookies[env.cookie.name];
-  const adminId = typeof token === 'string' ? authService.verifyToken(token) : null;
-  const admin = adminId ? await authService.getActiveAdmin(adminId) : null;
+  const session = typeof token === 'string' ? authService.readToken(token) : null;
+  const admin = session ? await authService.getActiveAdmin(session.adminId, session.tokenVersion) : null;
 
   if (!admin) {
     return res.status(401).json({ error: 'Authentication required' });

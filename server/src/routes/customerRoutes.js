@@ -74,7 +74,7 @@ function createCustomerRouter() {
     }
 
     try {
-      return res.status(201).json({ customer: await customerService.createCustomer(parsed.data) });
+      return res.status(201).json({ customer: await customerService.createCustomer(parsed.data, Number(req.admin.id)) });
     } catch (err) {
       return sendKnownError(res, err) || Promise.reject(err); // anything else becomes the generic 500
     }
@@ -90,7 +90,7 @@ function createCustomerRouter() {
     }
 
     try {
-      return res.json({ customer: await customerService.updateCustomer(id, parsed.data) });
+      return res.json({ customer: await customerService.updateCustomer(id, parsed.data, Number(req.admin.id)) });
     } catch (err) {
       return sendKnownError(res, err) || Promise.reject(err);
     }
@@ -103,7 +103,7 @@ function createCustomerRouter() {
       if (id === null) return undefined;
 
       try {
-        return res.json({ customer: await customerService.setCustomerActive(id, isActive) });
+        return res.json({ customer: await customerService.setCustomerActive(id, isActive, Number(req.admin.id)) });
       } catch (err) {
         return sendKnownError(res, err) || Promise.reject(err);
       }

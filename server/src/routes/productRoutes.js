@@ -79,7 +79,7 @@ function createProductRouter() {
     }
 
     try {
-      const product = await productService.createProduct(parsed.data);
+      const product = await productService.createProduct(parsed.data, Number(req.admin.id));
       return res.status(201).json({ product });
     } catch (err) {
       return sendKnownError(res, err) || Promise.reject(err); // anything else becomes the generic 500
@@ -96,7 +96,7 @@ function createProductRouter() {
     }
 
     try {
-      return res.json({ product: await productService.updateProduct(id, parsed.data) });
+      return res.json({ product: await productService.updateProduct(id, parsed.data, Number(req.admin.id)) });
     } catch (err) {
       return sendKnownError(res, err) || Promise.reject(err);
     }
@@ -109,7 +109,7 @@ function createProductRouter() {
       if (id === null) return undefined;
 
       try {
-        return res.json({ product: await productService.setProductActive(id, isActive) });
+        return res.json({ product: await productService.setProductActive(id, isActive, Number(req.admin.id)) });
       } catch (err) {
         return sendKnownError(res, err) || Promise.reject(err);
       }

@@ -1,13 +1,9 @@
 const express = require('express');
-const env = require('../config/env');
 const authService = require('../services/authService');
 const authenticate = require('../middleware/authenticate');
 const { createLoginLimiter } = require('../middleware/rateLimiters');
 const { loginSchema } = require('../validation/authSchemas');
-
-function cookieOptions() {
-  return { httpOnly: true, sameSite: 'lax', secure: env.cookie.secure, path: '/' };
-}
+const { setSessionCookie, clearSessionCookie } = require('../utils/sessionCookie');
 
 function createAuthRouter({ loginLimiter = createLoginLimiter() } = {}) {
   const router = express.Router();
@@ -32,15 +28,13 @@ function createAuthRouter({ loginLimiter = createLoginLimiter() } = {}) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    res.cookie(env.cookie.name, authService.signToken(admin), {
-      ...cookieOptions(),
-      maxAge: env.jwt.expiresInSeconds * 1000,
-    });
-    return res.json({ admin });
+    setSessionCookie(res, authService.signToken(admin));
+    // Only the id and email are sent back: never the session version or anything else.
+    return res.json({ admin: { id: admin.id, email: admin.email } });
   });
 
   router.post('/logout', (req, res) => {
-    res.clearCookie(env.cookie.name, cookieOptions());
+    clearSessionCookie(res);
     res.json({ message: 'Logged out' });
   });
 

@@ -16,4 +16,4 @@ const createAdminSchema = z.object({
   password: z.string().min(12).refine(withinByteLimit),
 });
 
-module.exports = { loginSchema, createAdminSchema, MAX_PASSWORD_BYTES };
+module.exports = { loginSchema, createAdminSchema, MAX_PASSWORD_BYTES, emailField: email, withinByteLimit };

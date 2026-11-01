@@ -16,6 +16,9 @@
   },
   "jest": {
     "testEnvironment": "node",
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setup/blockRealDatabase.js"
+    ],
     "testMatch": [
       "<rootDir>/tests/**/*.test.js"
     ],

@@ -1,7 +1,9 @@
 // Turns database rows into the shape the API returns.
 const productRepository = require('../repositories/productRepository');
 const stockAdjustmentRepository = require('../repositories/stockAdjustmentRepository');
+const auditService = require('./auditService');
 const { withTransaction } = require('../config/db');
+const { toCents, formatCents } = require('../utils/money');
 const { MAX_STOCK_QUANTITY } = require('../validation/productSchemas');
 
 // price stays a string (e.g. "19.99") so money is never converted to a floating-point number.
@@ -66,11 +68,50 @@ function isDuplicateSku(err) {
   return err && err.code === 'ER_DUP_ENTRY' && String(err.sqlMessage || '').includes('uq_products_sku');
 }
 
-// Saves the product, then reads it back so the response contains the values MySQL generated.
-async function createProduct(data) {
+// "10.5" and "10.50" are the same price. The audit log always stores two decimal places.
+function normalisePrice(price) {
+  return formatCents(toCents(price));
+}
+
+// Compares the stored product with the fields an edit sends. Returns null when nothing really changes, otherwise the
+// details for the audit log. PRIVACY: the log records WHICH fields changed (sku, name, price) and, for the price only,
+// the old and new value, which is validated digits. The SKU and name are free text, so their values are never
+// copied into the log (Activity shows the product's current SKU and name from the products table).
+function describeProductChanges(before, data) {
+  const changedFields = [];
+  let priceChange = null;
+  if (data.sku !== undefined && data.sku !== before.sku) {
+    changedFields.push('sku');
+  }
+  if (data.name !== undefined && data.name !== before.name) {
+    changedFields.push('name');
+  }
+  if (data.price !== undefined && toCents(data.price) !== toCents(before.price)) {
+    changedFields.push('price');
+    priceChange = { from: normalisePrice(before.price), to: normalisePrice(data.price) };
+  }
+  if (changedFields.length === 0) {
+    return null;
+  }
+  return priceChange ? { changedFields, changes: { price: priceChange } } : { changedFields };
+}
+
+// Saves the product and its audit record in ONE transaction, then reads the product back so the response contains
+// the values MySQL generated. adminId is the signed-in administrator.
+async function createProduct(data, adminId) {
   let id;
   try {
-    id = await productRepository.create(data);
+    id = await withTransaction(async (connection) => {
+      const newId = await productRepository.create(data, connection);
+      await auditService.record(connection, {
+        adminId,
+        eventType: 'PRODUCT_CREATED',
+        entityId: newId,
+        // Only the validated price: the SKU and name are free text and are not copied into the log.
+        details: { price: normalisePrice(data.price) },
+      });
+      return newId;
+    });
   } catch (err) {
     if (isDuplicateSku(err)) {
       throw new DuplicateSkuError();
@@ -93,10 +134,22 @@ async function getExistingProduct(id) {
   return toProduct(row);
 }
 
-// Changes the given fields (sku, name, price), then reads the product back.
-async function updateProduct(id, data) {
+// Changes the given fields (sku, name, price) and, if something really changed, records it in the audit log in the
+// same transaction. The product row is locked first, so the old values that are compared are the real ones. Then the
+// product is read back.
+async function updateProduct(id, data, adminId) {
   try {
-    await productRepository.update(id, data);
+    await withTransaction(async (connection) => {
+      const before = await productRepository.findByIdForUpdate(connection, id);
+      if (!before) {
+        throw new ProductNotFoundError();
+      }
+      await productRepository.update(id, data, connection);
+      const details = describeProductChanges(before, data);
+      if (details) {
+        await auditService.record(connection, { adminId, eventType: 'PRODUCT_UPDATED', entityId: id, details });
+      }
+    });
   } catch (err) {
     if (isDuplicateSku(err)) {
       throw new DuplicateSkuError();
@@ -107,8 +160,22 @@ async function updateProduct(id, data) {
 }
 
 // Deactivating hides a product from the default list; nothing is deleted, so order history stays intact.
-async function setProductActive(id, isActive) {
-  await productRepository.setActive(id, isActive);
+// Repeating a request that changes nothing is harmless and is not recorded in the audit log.
+async function setProductActive(id, isActive, adminId) {
+  await withTransaction(async (connection) => {
+    const before = await productRepository.findByIdForUpdate(connection, id);
+    if (!before) {
+      throw new ProductNotFoundError();
+    }
+    if (Boolean(before.is_active) !== isActive) {
+      await productRepository.setActive(id, isActive, connection);
+      await auditService.record(connection, {
+        adminId,
+        eventType: isActive ? 'PRODUCT_ACTIVATED' : 'PRODUCT_DEACTIVATED',
+        entityId: id,
+      });
+    }
+  });
   return getExistingProduct(id);
 }
 
