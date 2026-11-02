@@ -2,7 +2,7 @@
 // the change succeeds. Nothing is written to localStorage, sessionStorage, the URL or the console, and the passwords
 // are sent only in the one request. The server replaces the login cookie on success, so this browser stays signed in
 // and every other session ends.
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { changePassword } from '../api/account.js';
 import { UnexpectedResponseError } from '../api/products.js';
 import { ApiError, NetworkError } from '../api/client.js';
@@ -54,7 +54,8 @@ export default function PasswordSection() {
   const refs = { currentPassword: useRef(null), newPassword: useRef(null), confirmPassword: useRef(null) };
 
   // After a failed save the field to look at is focused once the form is enabled again (a disabled field can not take focus).
-  useEffect(() => {
+  // A layout effect so the focus moves in the same step as the DOM update that shows the error message (see ProfileSection).
+  useLayoutEffect(() => {
     if (!submitting && focusTarget) {
       refs[focusTarget].current?.focus();
       setFocusTarget(null);

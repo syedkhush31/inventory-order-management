@@ -1,7 +1,7 @@
 // Settings > Profile: shows who is signed in and lets them change their display name and their email address.
 // Changing the email needs the current password (the field appears only while the email is being changed). Nothing
 // counts as saved until the server says so.
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { updateProfile } from '../api/account.js';
 import { UnexpectedResponseError } from '../api/products.js';
 import { ApiError, NetworkError } from '../api/client.js';
@@ -56,7 +56,10 @@ export default function ProfileSection({ account, onSaved }) {
   const refs = { displayName: useRef(null), email: useRef(null), currentPassword: useRef(null) };
 
   // After a failed save the field to look at is focused once the form is enabled again (a disabled field can not take focus).
-  useEffect(() => {
+  // A layout effect, not a normal one: it runs in the same step as the DOM update that shows the error message, so the
+  // error and the focus always appear together. A normal effect runs a moment later, which left a gap in which the
+  // message was on screen but the focus had not moved yet.
+  useLayoutEffect(() => {
     if (!submitting && focusTarget) {
       refs[focusTarget].current?.focus();
       setFocusTarget(null);
