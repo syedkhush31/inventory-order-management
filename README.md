@@ -26,18 +26,48 @@ database transactions with row locks, and every input is validated on the server
 
 ## Screenshots
 
-> **Placeholders.** No screenshots have been added yet. Replace each line below with an image
-> (for example `![Dashboard](docs/screenshots/dashboard.png)`) once the images exist.
+Click any image to see it full size.
 
-| Page | Screenshot |
-|---|---|
-| Sign in | _Screenshot to be added_ |
-| Dashboard | _Screenshot to be added_ |
-| Inventory (with stock adjustment) | _Screenshot to be added_ |
-| Orders and order details | _Screenshot to be added_ |
-| Customers | _Screenshot to be added_ |
-| Activity | _Screenshot to be added_ |
-| Settings | _Screenshot to be added_ |
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/ScreenShots/Public/login.png"><img src="docs/ScreenShots/Public/login.png" alt="ShelfSync administrator sign-in page" width="100%"></a>
+      <br><b>Sign in.</b> Administrator sign-in with email and password; access is limited to authorised administrators.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/ScreenShots/Public/inventory.png"><img src="docs/ScreenShots/Public/inventory.png" alt="Inventory page with product list, stock levels and row actions" width="100%"></a>
+      <br><b>Inventory.</b> Searchable, sortable product list with edit, adjust stock, stock history and deactivate actions.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/ScreenShots/Public/orders.png"><img src="docs/ScreenShots/Public/orders.png" alt="Orders page with status filter and order list" width="100%"></a>
+      <br><b>Orders.</b> Search by order number, customer name or email, filter by status, and open an order to move it through its lifecycle.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/ScreenShots/Public/customers.png"><img src="docs/ScreenShots/Public/customers.png" alt="Customers page with search, status filter and customer list" width="100%"></a>
+      <br><b>Customers.</b> Customer list with search, status filter, edit, and deactivate or reactivate.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/ScreenShots/Public/activity.png"><img src="docs/ScreenShots/Public/activity.png" alt="Activity page showing a newest-first history of order and customer changes" width="100%"></a>
+      <br><b>Activity.</b> Newest-first history of who did what and when, with type and date filters and per-event details.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/ScreenShots/Public/settings-profile.png"><img src="docs/ScreenShots/Public/settings-profile.png" alt="Settings page with profile and password sections" width="100%"></a>
+      <br><b>Settings: profile and security.</b> Display name and email (changing the email needs the current password), and password change.
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center" valign="top">
+      <a href="docs/ScreenShots/Public/settings-preferences.png"><img src="docs/ScreenShots/Public/settings-preferences.png" alt="Settings page with inventory preferences and application information" width="50%"></a>
+      <br><b>Settings: inventory preferences and application information.</b> The low-stock threshold used by the Dashboard, plus application name, versions and environment.
+    </td>
+  </tr>
+</table>
+
+_The Dashboard and the stock-adjustment form are not pictured yet._
 
 ## Technology stack
 
